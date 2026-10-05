@@ -18,6 +18,7 @@ RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add - \
     build-essential \
     gdb \
     libgtest-dev \
+    libboost-dev \
     doxygen \
     # clang-format-19 \
     # clang-tidy-19 \

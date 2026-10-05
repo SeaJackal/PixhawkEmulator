@@ -4,6 +4,7 @@
     "name": "Hydrolib",
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
     "image": "seajackal/hydrolib:latest",
+    "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends libboost-dev",
     "features": {
         "ghcr.io/devcontainers/features/git:1": {}
     },

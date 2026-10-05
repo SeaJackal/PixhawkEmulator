@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <stdexcept>
 
 #include "battery_model.h"
 #include "controller_state_machine.h"
@@ -40,7 +41,12 @@ class Controller {
                         const Orientation& orientation);
   bool SetAutomaticControl(const Position& position,
                            const Orientation& orientation);
-  Telemetry Process();
+  Telemetry Process(TimePoint until);
+  [[nodiscard]] TimePoint GetTime() const { return time_; }
+  [[nodiscard]] TimePoint NextTelemetryTime() const {
+    return std::min({next_heartbeat_, next_attitude_, next_global_position_,
+                     next_battery_status_});
+  }
 
  private:
   Telemetry CollectTelemetry();
@@ -86,12 +92,15 @@ bool Controller<Model, Battery, StateMachine>::SetAutomaticControl(const Positio
 }
 
 template <typename Model, typename Battery, typename StateMachine>
-Telemetry Controller<Model, Battery, StateMachine>::Process() {
-  const auto until = time_ + kProcessPeriod;
-  while (time_ < until) {
+Telemetry Controller<Model, Battery, StateMachine>::Process(TimePoint until) {
+  if (until < time_) {
+    throw std::invalid_argument("Cannot rewind controller time");
+  }
+  const auto endpoint = std::min(until, NextTelemetryTime());
+  while (time_ < endpoint) {
     const double current_amps = model_.GetCurrentAmps();
-    const auto reached = state_machine_.Process(until);
-    assert(reached >= time_ && reached <= until);
+    const auto reached = state_machine_.Process(endpoint);
+    assert(reached >= time_ && reached <= endpoint);
     battery_.Process(current_amps, reached - time_);
     time_ = reached;
   }
@@ -101,6 +110,7 @@ Telemetry Controller<Model, Battery, StateMachine>::Process() {
 template <typename Model, typename Battery, typename StateMachine>
 Telemetry Controller<Model, Battery, StateMachine>::CollectTelemetry() {
   Telemetry telemetry;
+  telemetry.timestamp = time_;
   if (time_ == next_heartbeat_) {
     const auto state = state_machine_.GetState();
     const bool ready = state != State::kGuarded && state != State::kNotReady;
@@ -123,5 +133,8 @@ Telemetry Controller<Model, Battery, StateMachine>::CollectTelemetry() {
         battery_.GetChargeAmpHours()};
     next_battery_status_ += kBatteryStatusPeriod;
   }
+  telemetry.has_telemetry = telemetry.heartbeat.has_value() ||
+      telemetry.attitude.has_value() || telemetry.global_position.has_value() ||
+      telemetry.battery_status.has_value();
   return telemetry;
 }

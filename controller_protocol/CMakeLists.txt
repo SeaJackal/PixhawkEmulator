@@ -1,0 +1,3 @@
+add_library(controller_protocol INTERFACE)
+target_include_directories(controller_protocol INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(controller_protocol INTERFACE controller network_message)

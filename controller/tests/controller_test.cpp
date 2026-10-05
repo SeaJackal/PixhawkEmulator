@@ -22,7 +22,7 @@ class ControllerTelemetryTest : public ::testing::Test {
   Telemetry Steps(int count) {
     Telemetry telemetry;
     for (int i = 0; i < count; ++i) {
-      telemetry = controller.Process();
+      telemetry = controller.Process(controller.GetTime() + 20ms);
     }
     return telemetry;
   }
@@ -37,8 +37,10 @@ class ControllerTelemetryTest : public ::testing::Test {
 TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
   EXPECT_EQ(Controller<>::kProcessPeriod, 20ms);
   for (int tick = 1; tick <= 101; ++tick) {
-    const auto telemetry = controller.Process();
+    const auto telemetry = controller.Process(controller.GetTime() + 20ms);
     const auto timestamp = start + tick * 20ms;
+    EXPECT_EQ(telemetry.timestamp, timestamp);
+    EXPECT_TRUE(telemetry.has_telemetry);
     ASSERT_TRUE(telemetry.attitude);
     EXPECT_EQ(telemetry.attitude->timestamp, timestamp);
     EXPECT_EQ(telemetry.heartbeat.has_value(), tick % 50 == 0);
@@ -59,6 +61,43 @@ TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
                   2.0 - tick * 0.02 / 3600.0, 1e-11);
     }
   }
+}
+
+TEST_F(ControllerTelemetryTest, PartialStepsPreserveAllTelemetryBoundaries) {
+  const auto partial = controller.Process(start + 7ms);
+  EXPECT_EQ(partial.timestamp, start + 7ms);
+  EXPECT_FALSE(partial.has_telemetry);
+  EXPECT_FALSE(partial.heartbeat);
+  EXPECT_FALSE(partial.attitude);
+  EXPECT_FALSE(partial.global_position);
+  EXPECT_FALSE(partial.battery_status);
+  EXPECT_EQ(controller.GetTime(), start + 7ms);
+  EXPECT_EQ(controller.NextTelemetryTime(), start + 20ms);
+  for (int tick = 1; tick <= 50; ++tick) {
+    const auto telemetry = controller.Process(start + 1013ms);
+    EXPECT_TRUE(telemetry.has_telemetry);
+    EXPECT_EQ(telemetry.timestamp, start + tick * 20ms);
+    EXPECT_EQ(controller.GetTime(), telemetry.timestamp);
+    ASSERT_TRUE(telemetry.attitude);
+    EXPECT_EQ(telemetry.attitude->timestamp, telemetry.timestamp);
+    EXPECT_EQ(telemetry.global_position.has_value(), tick % 5 == 0);
+    EXPECT_EQ(telemetry.battery_status.has_value(), tick % 25 == 0);
+    EXPECT_EQ(telemetry.heartbeat.has_value(), tick == 50);
+  }
+  const auto remainder = controller.Process(start + 1013ms);
+  EXPECT_EQ(remainder.timestamp, start + 1013ms);
+  EXPECT_FALSE(remainder.has_telemetry);
+  EXPECT_EQ(controller.GetTime(), start + 1013ms);
+  EXPECT_FALSE(controller.Process(start + 1013ms).has_telemetry);
+  EXPECT_THROW(controller.Process(start + 1012ms), std::invalid_argument);
+  const auto telemetry = controller.Process(start + 1033ms);
+  ASSERT_TRUE(telemetry.attitude);
+  EXPECT_EQ(telemetry.attitude->timestamp, start + 1020ms);
+  EXPECT_EQ(controller.GetTime(), start + 1020ms);
+  const auto repeated = controller.Process(start + 1020ms);
+  EXPECT_EQ(repeated.timestamp, start + 1020ms);
+  EXPECT_FALSE(repeated.has_telemetry);
+  EXPECT_FALSE(repeated.attitude);
 }
 
 TEST_F(ControllerTelemetryTest, ForwardsCommandsAndUsesExternalLogger) {
@@ -164,7 +203,7 @@ TEST_F(ControllerTelemetryTest, HandlesZeroAndPartialStepReadinessTimeouts) {
     ControllerStateMachine custom{model, logger, start, timeout};
     Controller local{model, battery, custom, start};
     local.Command(Command::kUnguard);
-    const auto telemetry = local.Process();
+    const auto telemetry = local.Process(start + 20ms);
     EXPECT_EQ(custom.GetState(), State::kReady);
     ASSERT_TRUE(telemetry.attitude);
     EXPECT_EQ(telemetry.attitude->timestamp, start + 20ms);
@@ -265,7 +304,7 @@ TEST(ControllerInjectionTest, UsesTemplateDependenciesAndIntegratesEachEvent) {
   EXPECT_DOUBLE_EQ(state_machine.orientation.pitch_radians, 5.0);
   EXPECT_TRUE(controller.SetAutomaticControl({7.0, 8.0, 9.0}, {}));
   EXPECT_DOUBLE_EQ(state_machine.target.z_meters, 9.0);
-  const auto telemetry = controller.Process();
+  const auto telemetry = controller.Process(start + 20ms);
   ASSERT_EQ(state_machine.endpoints.size(), 2u);
   EXPECT_EQ(state_machine.endpoints[0], start + 20ms);
   EXPECT_EQ(state_machine.endpoints[1], start + 20ms);
@@ -280,7 +319,7 @@ TEST(ControllerInjectionTest, UsesTemplateDependenciesAndIntegratesEachEvent) {
   EXPECT_DOUBLE_EQ(telemetry.attitude->angular_velocity.yaw_radians_per_second, 6.0);
   Telemetry heartbeat_telemetry;
   for (int tick = 1; tick < 50; ++tick) {
-    heartbeat_telemetry = controller.Process();
+    heartbeat_telemetry = controller.Process(controller.GetTime() + 20ms);
   }
   ASSERT_TRUE(heartbeat_telemetry.heartbeat);
   EXPECT_EQ(heartbeat_telemetry.heartbeat->timestamp, start + 1s);

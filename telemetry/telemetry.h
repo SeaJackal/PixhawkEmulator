@@ -32,6 +32,8 @@ struct BatteryStatusMessage {
 };
 
 struct Telemetry {
+  simulation::TimePoint timestamp{};
+  bool has_telemetry = false;
   std::optional<HeartbeatMessage> heartbeat;
   std::optional<AttitudeMessage> attitude;
   std::optional<GlobalPositionMessage> global_position;
