@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.20)
+project(PixhawkSimulator LANGUAGES CXX)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Threads REQUIRED)
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+    include(GoogleTest)
+endif()
+
+add_subdirectory(simulation_time)
+add_subdirectory(battery_model)
+add_subdirectory(dynamic_model)
+add_subdirectory(logger)
+add_subdirectory(controller_state_machine)
+add_subdirectory(telemetry)
+add_subdirectory(network_message)
+add_subdirectory(network_emulator)
+add_subdirectory(controller)

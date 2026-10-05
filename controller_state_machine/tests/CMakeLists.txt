@@ -1,0 +1,4 @@
+add_executable(controller_state_machine_tests controller_state_machine_test.cpp)
+target_link_libraries(controller_state_machine_tests PRIVATE controller_state_machine GTest::gtest_main)
+
+gtest_discover_tests(controller_state_machine_tests)

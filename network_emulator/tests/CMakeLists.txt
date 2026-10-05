@@ -1,0 +1,4 @@
+add_executable(network_emulator_tests network_emulator_test.cpp)
+target_link_libraries(network_emulator_tests PRIVATE network_emulator GTest::gtest_main)
+
+gtest_discover_tests(network_emulator_tests)

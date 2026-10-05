@@ -1,0 +1,4 @@
+add_executable(network_message_tests network_message_test.cpp telemetry_serialization_test.cpp)
+target_link_libraries(network_message_tests PRIVATE network_message GTest::gtest_main)
+
+gtest_discover_tests(network_message_tests)

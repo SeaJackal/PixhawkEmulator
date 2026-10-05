@@ -1,0 +1,4 @@
+add_executable(battery_model_tests battery_model_test.cpp)
+target_link_libraries(battery_model_tests PRIVATE battery_model GTest::gtest_main)
+
+gtest_discover_tests(battery_model_tests)

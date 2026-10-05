@@ -1,0 +1,4 @@
+add_library(telemetry INTERFACE)
+target_include_directories(telemetry INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(telemetry INTERFACE cxx_std_17)
+target_link_libraries(telemetry INTERFACE controller_state_machine dynamic_model simulation_time)

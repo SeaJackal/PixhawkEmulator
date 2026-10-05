@@ -1,0 +1,54 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
+{
+    "name": "Hydrolib",
+    // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+    "image": "seajackal/hydrolib:latest",
+    "features": {
+        "ghcr.io/devcontainers/features/git:1": {}
+    },
+    // Remove for Windows
+    "mounts": [
+        "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind"
+    ],
+    "runArgs": [
+        "--security-opt",
+        "seccomp=unconfined",
+        "--security-opt",
+        "apparmor=unconfined"
+    ],
+    // "build": {
+    //     "dockerfile": "Dockerfile",
+    //     "args": {
+    //         "USERNAME": "hydrolib",
+    //         "GID": "1000",
+    //         "UID": "1000"
+    //     },
+    //     "options": [
+    //         "--platform=linux/amd64"
+    //     ]
+    // },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "anysphere.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "twxs.cmake",
+                "josetr.cmake-language-support-vscode",
+                "ms-vscode.cmake-tools",
+                "ms-vscode-remote.remote-containers",
+                "ms-azuretools.vscode-docker",
+                "cschlosser.doxdocgen",
+                "xaver.clang-format",
+                "llvm-vs-code-extensions.vscode-clangd"
+            ],
+            "settings": {
+                "clangd.arguments": [
+                    "--compile-commands-dir=build",
+                    "--clang-tidy"
+                ],
+                "C_Cpp.intelliSenseEngine": "disabled"
+            }
+        }
+    }
+}

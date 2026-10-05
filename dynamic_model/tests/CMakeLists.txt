@@ -1,0 +1,4 @@
+add_executable(dynamic_model_tests dynamic_model_test.cpp)
+target_link_libraries(dynamic_model_tests PRIVATE dynamic_model GTest::gtest_main)
+
+gtest_discover_tests(dynamic_model_tests)

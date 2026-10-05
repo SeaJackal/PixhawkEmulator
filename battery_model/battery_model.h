@@ -1,0 +1,26 @@
+#pragma once
+
+#include "simulation_time.h"
+
+class BatteryModel {
+ public:
+  static constexpr double kCapacityAmpHours = 2.0;
+  static constexpr double kEmptyVoltageVolts = 9.0;
+  static constexpr double kFullVoltageVolts = 12.6;
+  static constexpr double kLowChargePercent = 20.0;
+  static constexpr double kCriticalChargePercent = 10.0;
+
+  enum class Status { kOk, kLow, kCritical };
+
+  ~BatteryModel() = default;
+
+  bool Process(double current_amps, simulation::Duration elapsed);
+  void Reset();
+
+  [[nodiscard]] double GetChargeAmpHours() const;
+  [[nodiscard]] double GetVoltageVolts() const;
+  [[nodiscard]] Status GetStatus() const;
+
+ private:
+  double charge_amp_hours_ = kCapacityAmpHours;
+};
