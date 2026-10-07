@@ -6,6 +6,5 @@ enum class MessageType {
   kGlobalPosition = 2,
   kBatteryStatus = 3,
   kCommand = 4,
-  kAutomaticControl = 5,
-  kManualControl = 6
+  kControl = 5
 };

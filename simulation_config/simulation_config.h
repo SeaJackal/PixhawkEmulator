@@ -24,6 +24,7 @@ struct StateMachineConfig {
 
 struct TransportConfig {
   UdpEndpoint local{"127.0.0.1", 14560};
+  UdpEndpoint manual_local{"127.0.0.1", 14561};
   UdpEndpoint peer{"127.0.0.1", 14550};
 };
 

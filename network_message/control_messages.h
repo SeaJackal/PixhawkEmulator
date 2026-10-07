@@ -9,13 +9,7 @@ struct CommandMessage {
   ControllerStateMachine::CommandType command;
 };
 
-struct AutomaticControlMessage {
-  simulation::TimePoint timestamp;
-  Position position;
-  Orientation orientation;
-};
-
-struct ManualControlMessage {
+struct ControlMessage {
   simulation::TimePoint timestamp;
   Position position;
   Orientation orientation;

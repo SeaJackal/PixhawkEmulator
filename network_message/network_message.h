@@ -33,11 +33,8 @@ struct NetworkMessage {
       case MessageType::kCommand:
         timestamp = Deserialize<CommandMessage>(payload).timestamp;
         break;
-      case MessageType::kAutomaticControl:
-        timestamp = Deserialize<AutomaticControlMessage>(payload).timestamp;
-        break;
-      case MessageType::kManualControl:
-        timestamp = Deserialize<ManualControlMessage>(payload).timestamp;
+      case MessageType::kControl:
+        timestamp = Deserialize<ControlMessage>(payload).timestamp;
         break;
       default:
         throw std::invalid_argument("Unknown message type");
@@ -85,11 +82,6 @@ constexpr MessageType NetworkMessage::GetType<CommandMessage>() {
 }
 
 template <>
-constexpr MessageType NetworkMessage::GetType<AutomaticControlMessage>() {
-  return MessageType::kAutomaticControl;
-}
-
-template <>
-constexpr MessageType NetworkMessage::GetType<ManualControlMessage>() {
-  return MessageType::kManualControl;
+constexpr MessageType NetworkMessage::GetType<ControlMessage>() {
+  return MessageType::kControl;
 }

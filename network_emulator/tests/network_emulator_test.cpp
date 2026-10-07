@@ -14,8 +14,7 @@ using Type = MessageType;
 
 constexpr std::array kTypes{Type::kHeartbeat, Type::kAttitude,
                             Type::kGlobalPosition, Type::kBatteryStatus,
-                            Type::kCommand, Type::kAutomaticControl,
-                            Type::kManualControl};
+                            Type::kCommand, Type::kControl};
 
 NetworkMessage MessageAt(TimePoint timestamp, Type type = Type::kHeartbeat) {
   switch (type) {
@@ -31,10 +30,8 @@ NetworkMessage MessageAt(TimePoint timestamp, Type type = Type::kHeartbeat) {
     case Type::kCommand:
       return NetworkMessage{CommandMessage{
           timestamp, ControllerStateMachine::CommandType::kHold}};
-    case Type::kAutomaticControl:
-      return NetworkMessage{AutomaticControlMessage{timestamp, {}, {}}};
-    case Type::kManualControl:
-      return NetworkMessage{ManualControlMessage{timestamp, {}, {}}};
+    case Type::kControl:
+      return NetworkMessage{ControlMessage{timestamp, {}, {}}};
   }
   throw std::invalid_argument("Unknown message type");
 }

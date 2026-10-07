@@ -42,6 +42,8 @@ TEST(SimulationConfigTest, DefaultsMatchExistingSimulation) {
   EXPECT_EQ(config.state_machine.readiness_timeout, 1s);
   EXPECT_EQ(config.transport.local.address, "127.0.0.1");
   EXPECT_EQ(config.transport.local.port, 14560);
+  EXPECT_EQ(config.transport.manual_local.address, "127.0.0.1");
+  EXPECT_EQ(config.transport.manual_local.port, 14561);
   EXPECT_EQ(config.transport.peer.address, "127.0.0.1");
   EXPECT_EQ(config.transport.peer.port, 14550);
   EXPECT_EQ(config.network.inbound.latency, 0ms);
@@ -150,6 +152,7 @@ TEST(SimulationConfigTest, ParsesAllSimulationParameters) {
     "state_machine":{"readiness_timeout_ms":0},
     "transport":{
       "local":{"address":"0.0.0.0","port":65535},
+      "manual_local":{"address":"127.0.0.2","port":0},
       "peer":{"address":"192.168.1.2","port":1}
     },
     "network":{"inbound":{},"outbound":{"latency_ms":100,"filters":[]}}
@@ -161,6 +164,8 @@ TEST(SimulationConfigTest, ParsesAllSimulationParameters) {
   EXPECT_EQ(config.state_machine.readiness_timeout, 0ms);
   EXPECT_EQ(config.transport.local.address, "0.0.0.0");
   EXPECT_EQ(config.transport.local.port, 65535);
+  EXPECT_EQ(config.transport.manual_local.address, "127.0.0.2");
+  EXPECT_EQ(config.transport.manual_local.port, 0);
   EXPECT_EQ(config.transport.peer.address, "192.168.1.2");
   EXPECT_EQ(config.transport.peer.port, 1);
   EXPECT_EQ(config.network.outbound.latency, 100ms);
@@ -180,7 +185,7 @@ TEST(SimulationConfigTest, LoadsCompleteExampleAndAppliesIndependentTroubles) {
   const auto outbound = CreateNetworkEmulator(config.network.outbound, start);
   for (const auto offset : {9999ms, 10000ms, 14999ms, 15000ms}) {
     const auto message =
-        MessageAt(start + offset, MessageType::kAutomaticControl);
+        MessageAt(start + offset, MessageType::kControl);
     const auto received = inbound.Process(message);
     if (offset >= 10000ms && offset < 15000ms)
       EXPECT_FALSE(received);
@@ -211,8 +216,7 @@ TEST(SimulationConfigTest, SupportsEveryMessageType) {
       std::pair{"global_position", MessageType::kGlobalPosition},
       std::pair{"battery_status", MessageType::kBatteryStatus},
       std::pair{"command", MessageType::kCommand},
-      std::pair{"automatic_control", MessageType::kAutomaticControl},
-      std::pair{"manual_control", MessageType::kManualControl}};
+      std::pair{"control", MessageType::kControl}};
   for (const auto& [name, type] : types) {
     SCOPED_TRACE(name);
     const auto config = ParseSimulationConfig(
@@ -287,6 +291,11 @@ TEST(SimulationConfigTest, RejectsInvalidJsonStructureAndValues) {
       std::pair{R"({"transport":{"local":{"port":65536}}})", "local.port"},
       std::pair{R"({"transport":{"local":{"port":-1}}})", "local.port"},
       std::pair{R"({"transport":{"local":{"port":1.0}}})", "local.port"},
+      std::pair{R"({"transport":{"manual_local":{"address":"::1"}}})",
+                "manual_local.address"},
+      std::pair{R"({"transport":{"manual_local":{"port":65536}}})", "manual_local.port"},
+      std::pair{R"({"transport":{"manual_local":{"port":-1}}})", "manual_local.port"},
+      std::pair{R"({"transport":{"manual_local":{"port":1.0}}})", "manual_local.port"},
       std::pair{R"({"network":{"inbound":{"latency_ms":-1}}})",
                 "inbound.latency_ms"},
       std::pair{R"({"network":{"inbound":{"latency_ms":null}}})",
@@ -308,6 +317,8 @@ TEST(SimulationConfigTest, RejectsInvalidFilterFieldsWithIndexedPaths) {
       std::pair{R"({"kind":"other"})", "kind"},
       std::pair{R"({"kind":"drop"})", "message_type"},
       std::pair{R"({"kind":"drop","message_type":"unknown"})", "message_type"},
+      std::pair{R"({"kind":"drop","message_type":"automatic_control"})", "message_type"},
+      std::pair{R"({"kind":"drop","message_type":"manual_control"})", "message_type"},
       std::pair{R"({"kind":"drop","message_type":"heartbeat"})", "start_ms"},
       std::pair{R"({"kind":"drop","message_type":"heartbeat","start_ms":0})",
                 "end_ms"},

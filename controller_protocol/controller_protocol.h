@@ -6,10 +6,11 @@
 #include <stdexcept>
 #include <variant>
 
+enum class ControlSource { kAutomatic, kManual };
+
 class ControllerProtocol {
  public:
-  using Command = std::variant<CommandMessage, ManualControlMessage,
-                               AutomaticControlMessage>;
+  using Command = std::variant<CommandMessage, ControlMessage>;
 
   static std::vector<NetworkMessage> Encode(const Telemetry& telemetry) {
     std::vector<NetworkMessage> messages;
@@ -25,13 +26,8 @@ class ControllerProtocol {
     switch (message.type) {
       case MessageType::kCommand:
         return Deserialize<CommandMessage>(payload);
-      case MessageType::kManualControl: {
-        auto command = Deserialize<ManualControlMessage>(payload);
-        Validate(command.position, command.orientation);
-        return command;
-      }
-      case MessageType::kAutomaticControl: {
-        auto command = Deserialize<AutomaticControlMessage>(payload);
+      case MessageType::kControl: {
+        auto command = Deserialize<ControlMessage>(payload);
         Validate(command.position, command.orientation);
         return command;
       }
@@ -41,9 +37,10 @@ class ControllerProtocol {
   }
 
   template <typename ControllerType>
-  static bool Deliver(ControllerType& controller, const NetworkMessage& message) {
-    return std::visit([&controller](const auto& command) {
-      return Apply(controller, command);
+  static bool Deliver(ControllerType& controller, const NetworkMessage& message,
+                      ControlSource source) {
+    return std::visit([&controller, source](const auto& command) {
+      return Apply(controller, command, source);
     }, Decode(message));
   }
 
@@ -57,17 +54,17 @@ class ControllerProtocol {
   }
 
   template <typename ControllerType>
-  static bool Apply(ControllerType& controller, const CommandMessage& command) {
+  static bool Apply(ControllerType& controller, const CommandMessage& command,
+                    ControlSource) {
     return controller.Command(command.command);
   }
 
   template <typename ControllerType>
-  static bool Apply(ControllerType& controller, const ManualControlMessage& command) {
-    return controller.SetManualControl(command.position, command.orientation);
-  }
-
-  template <typename ControllerType>
-  static bool Apply(ControllerType& controller, const AutomaticControlMessage& command) {
+  static bool Apply(ControllerType& controller, const ControlMessage& command,
+                    ControlSource source) {
+    if (source == ControlSource::kManual) {
+      return controller.SetManualControl(command.position, command.orientation);
+    }
     return controller.SetAutomaticControl(command.position, command.orientation);
   }
 };

@@ -39,6 +39,7 @@ int main(int argc, char** argv) try {
     if (option == "--help") {
       std::cout << "pixhawk_simulator [--config FILE]\n"
                    "                  [--bind-address IPv4] [--bind-port PORT]\n"
+                   "                  [--manual-bind-address IPv4] [--manual-bind-port PORT]\n"
                    "                  [--peer-address IPv4] [--peer-port PORT]\n"
                    "                  [--inbound-latency-ms MS] [--outbound-latency-ms MS]\n"
                    "Command-line options override config file values.\n";
@@ -52,12 +53,15 @@ int main(int argc, char** argv) try {
   }
   auto config = config_path ? LoadSimulationConfig(config_path) : SimulationConfig{};
   auto& local = config.transport.local;
+  auto& manual_local = config.transport.manual_local;
   auto& peer = config.transport.peer;
   for (int index = 1; index < argc; index += 2) {
     const std::string_view option = argv[index];
     if (option == "--config") continue;
     const std::string_view value = argv[index + 1];
     if (option == "--bind-address") local.address = value;
+    else if (option == "--manual-bind-address") manual_local.address = value;
+    else if (option == "--manual-bind-port") manual_local.port = Number(value, 65535);
     else if (option == "--peer-address") peer.address = value;
     else if (option == "--bind-port") local.port = Number(value, 65535);
     else if (option == "--peer-port") peer.port = Number(value, 65535);
@@ -87,6 +91,7 @@ int main(int argc, char** argv) try {
     controller.AddGnssLoss(start + loss.start, loss.duration);
   }
   UdpTransport transport{local, peer};
+  UdpTransport manual_transport{manual_local, peer};
   std::unique_ptr<SyslogSender> syslog;
   std::function<void(const Logger::Record&)> record_sink;
   if (config.syslog) {
@@ -99,14 +104,16 @@ int main(int argc, char** argv) try {
       std::cerr << "syslog disabled: " << error.what() << '\n';
     }
   }
-  SimulationRunner runner{controller, transport,
+  SimulationRunner runner{controller, transport, manual_transport,
                           CreateNetworkEmulator(config.network.inbound, start),
                           CreateNetworkEmulator(config.network.outbound, start),
                           logger, std::move(record_sink)};
   std::signal(SIGINT, Stop);
   std::signal(SIGTERM, Stop);
   const auto bound = transport.LocalEndpoint();
-  std::cout << "Listening on " << bound.address << ':' << bound.port
+  const auto manual_bound = manual_transport.LocalEndpoint();
+  std::cout << "Automatic listening on " << bound.address << ':' << bound.port
+            << "; manual listening on " << manual_bound.address << ':' << manual_bound.port
             << "; peer " << peer.address << ':' << peer.port
             << "; timestamps use steady_clock\n" << std::flush;
   runner.Run([] { return stop_requested != 0; });

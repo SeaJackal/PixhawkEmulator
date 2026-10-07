@@ -46,10 +46,8 @@ TEST(NetworkMessageTest, ConstructorsRoundTripEveryMessageType) {
                MessageType::kBatteryStatus, std::byte{3});
   ExpectPacket(CommandMessage{time, ControllerStateMachine::CommandType::kHold},
                MessageType::kCommand, std::byte{4});
-  ExpectPacket(AutomaticControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
-               MessageType::kAutomaticControl, std::byte{5});
-  ExpectPacket(ManualControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
-               MessageType::kManualControl, std::byte{6});
+  ExpectPacket(ControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
+               MessageType::kControl, std::byte{5});
 }
 
 TEST(NetworkMessageTest, OwnsSerializedBytesAfterTemporaryArgumentExpires) {
@@ -80,8 +78,11 @@ TEST(NetworkMessageTest, ByteConstructorAcceptsMovedBytesAndRestoresMilliseconds
 }
 
 TEST(NetworkMessageTest, ByteConstructorRejectsMissingOrUnknownType) {
+  auto removed_type = NetworkMessage{ControlMessage{{}, {}, {}}}.data;
+  removed_type.back() = std::byte{6};
+  EXPECT_THROW(NetworkMessage{removed_type}, std::invalid_argument);
   EXPECT_THROW(NetworkMessage{std::vector<std::byte>{}}, std::invalid_argument);
-  for (unsigned int code = 7; code <= 255; ++code) {
+  for (unsigned int code = 6; code <= 255; ++code) {
     const std::vector<std::byte> bytes{static_cast<std::byte>(code)};
     EXPECT_THROW(NetworkMessage{bytes}, std::invalid_argument);
   }

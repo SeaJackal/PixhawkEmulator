@@ -12,8 +12,7 @@ std::vector<std::byte> Serialize(const GlobalPositionMessage& message);
 std::vector<std::byte> Serialize(const BatteryStatusMessage& message);
 std::vector<std::byte> Serialize(const Telemetry& telemetry);
 std::vector<std::byte> Serialize(const CommandMessage& message);
-std::vector<std::byte> Serialize(const AutomaticControlMessage& message);
-std::vector<std::byte> Serialize(const ManualControlMessage& message);
+std::vector<std::byte> Serialize(const ControlMessage& message);
 
 template <typename Message>
 Message Deserialize(const std::vector<std::byte>& bytes) = delete;
@@ -31,8 +30,5 @@ BatteryStatusMessage Deserialize<BatteryStatusMessage>(
 template <>
 CommandMessage Deserialize<CommandMessage>(const std::vector<std::byte>& bytes);
 template <>
-AutomaticControlMessage Deserialize<AutomaticControlMessage>(
-    const std::vector<std::byte>& bytes);
-template <>
-ManualControlMessage Deserialize<ManualControlMessage>(
+ControlMessage Deserialize<ControlMessage>(
     const std::vector<std::byte>& bytes);

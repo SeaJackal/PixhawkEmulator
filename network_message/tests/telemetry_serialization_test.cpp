@@ -190,8 +190,7 @@ void ExpectControlPayload() {
 }
 
 TEST(ControlSerializationTest, ControlsEncodePositionThenOrientation) {
-  ExpectControlPayload<AutomaticControlMessage>();
-  ExpectControlPayload<ManualControlMessage>();
+  ExpectControlPayload<ControlMessage>();
 }
 
 template <typename Message>
@@ -215,8 +214,7 @@ TEST(TelemetrySerializationTest, NetworkMessageSerializesTimestampAndAppendsType
   ExpectNetworkMessage(GlobalPositionMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}});
   ExpectNetworkMessage(BatteryStatusMessage{time, 12.0, 10.0, 2.0});
   ExpectNetworkMessage(CommandMessage{time, ControllerStateMachine::CommandType::kHold});
-  ExpectNetworkMessage(AutomaticControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}});
-  ExpectNetworkMessage(ManualControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}});
+  ExpectNetworkMessage(ControlMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}});
 }
 
 template <typename Message>
@@ -243,8 +241,7 @@ TEST(MessageSerializationTest, TimestampsRoundTripToMillisecondsForEveryMessageT
   ExpectTimestampRoundTrip(GlobalPositionMessage{{}, {}, {}});
   ExpectTimestampRoundTrip(BatteryStatusMessage{{}, 12.0, 1.0, 2.0});
   ExpectTimestampRoundTrip(CommandMessage{{}, ControllerStateMachine::CommandType::kHold});
-  ExpectTimestampRoundTrip(AutomaticControlMessage{{}, {}, {}});
-  ExpectTimestampRoundTrip(ManualControlMessage{{}, {}, {}});
+  ExpectTimestampRoundTrip(ControlMessage{{}, {}, {}});
 }
 
 TEST(MessageSerializationTest, TimestampUsesSignedLittleEndianMilliseconds) {
@@ -284,8 +281,7 @@ TEST(TelemetryDeserializationTest, RejectsTruncatedAndOversizedMessages) {
   ExpectInvalidSizes(GlobalPositionMessage{{}, {}, {}});
   ExpectInvalidSizes(BatteryStatusMessage{{}, 12.0, 1.0, 2.0});
   ExpectInvalidSizes(CommandMessage{{}, ControllerStateMachine::CommandType::kHold});
-  ExpectInvalidSizes(AutomaticControlMessage{{}, {}, {}});
-  ExpectInvalidSizes(ManualControlMessage{{}, {}, {}});
+  ExpectInvalidSizes(ControlMessage{{}, {}, {}});
 }
 
 TEST(TelemetryDeserializationTest, PreservesSpecialDoubleBitPatterns) {

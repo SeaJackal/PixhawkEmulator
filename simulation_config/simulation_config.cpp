@@ -91,8 +91,7 @@ MessageType ReadMessageType(const Value& value, const std::string& path) {
   if (name == "global_position") return MessageType::kGlobalPosition;
   if (name == "battery_status") return MessageType::kBatteryStatus;
   if (name == "command") return MessageType::kCommand;
-  if (name == "automatic_control") return MessageType::kAutomaticControl;
-  if (name == "manual_control") return MessageType::kManualControl;
+  if (name == "control") return MessageType::kControl;
   Invalid(path, "unknown message type");
 }
 
@@ -247,9 +246,12 @@ SimulationConfig ParseSimulationConfig(std::string_view json) {
     }
   }
   if (const auto* transport = root.if_contains("transport")) {
-    const auto& object = ReadObject(*transport, "transport", {"local", "peer"});
+    const auto& object = ReadObject(*transport, "transport", {"local", "manual_local", "peer"});
     if (const auto* local = object.if_contains("local")) {
       ReadEndpoint(*local, "transport.local", config.transport.local, false);
+    }
+    if (const auto* manual = object.if_contains("manual_local")) {
+      ReadEndpoint(*manual, "transport.manual_local", config.transport.manual_local, false);
     }
     if (const auto* peer = object.if_contains("peer")) {
       ReadEndpoint(*peer, "transport.peer", config.transport.peer, true);

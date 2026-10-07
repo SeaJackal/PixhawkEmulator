@@ -20,16 +20,19 @@ class SimulationRunner {
   using RecordSink = std::function<void(const Logger::Record&)>;
 
   SimulationRunner(ControllerType& controller, Transport& transport,
+                   Transport& manual_transport,
                    NetworkEmulator inbound, NetworkEmulator outbound)
       : controller_(controller),
         transport_(transport),
+        manual_transport_(manual_transport),
         inbound_(std::move(inbound)),
         outbound_(std::move(outbound)) {}
 
   SimulationRunner(ControllerType& controller, Transport& transport,
+                   Transport& manual_transport,
                    NetworkEmulator inbound, NetworkEmulator outbound,
                    Logger& logger, RecordSink record_sink = {})
-      : SimulationRunner(controller, transport, std::move(inbound),
+      : SimulationRunner(controller, transport, manual_transport, std::move(inbound),
                          std::move(outbound)) {
     logger_ = &logger;
     record_sink_ = std::move(record_sink);
@@ -87,22 +90,30 @@ class SimulationRunner {
 
   void Receive() {
     while (true) {
-      auto bytes = transport_.Receive();
-      if (!bytes) break;
-      NetworkMessage message(std::move(*bytes));
-      ControllerProtocol::Decode(message);
-      if (auto delivery = inbound_.Process(std::move(message))) {
-        tasks_.emplace(delivery->arrival_time,
-                       [&controller = controller_,
-                        message = std::move(delivery->message)] {
-                         ControllerProtocol::Deliver(controller, message);
-                       });
-      }
+      const bool automatic = Receive(transport_, ControlSource::kAutomatic);
+      const bool manual = Receive(manual_transport_, ControlSource::kManual);
+      if (!automatic && !manual) break;
     }
+  }
+
+  bool Receive(Transport& transport, ControlSource source) {
+    auto bytes = transport.Receive();
+    if (!bytes) return false;
+    NetworkMessage message(std::move(*bytes));
+    ControllerProtocol::Decode(message);
+    if (auto delivery = inbound_.Process(std::move(message))) {
+      tasks_.emplace(delivery->arrival_time,
+                     [&controller = controller_, source,
+                      message = std::move(delivery->message)] {
+                       ControllerProtocol::Deliver(controller, message, source);
+                     });
+    }
+    return true;
   }
 
   ControllerType& controller_;
   Transport& transport_;
+  Transport& manual_transport_;
   NetworkEmulator inbound_;
   NetworkEmulator outbound_;
   std::multimap<TimePoint, std::function<void()>> tasks_;

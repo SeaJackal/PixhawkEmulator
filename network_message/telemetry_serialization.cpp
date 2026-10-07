@@ -183,11 +183,7 @@ std::vector<std::byte> Serialize(const CommandMessage& message) {
   return bytes;
 }
 
-std::vector<std::byte> Serialize(const AutomaticControlMessage& message) {
-  return SerializeControl(message.timestamp, message.position, message.orientation);
-}
-
-std::vector<std::byte> Serialize(const ManualControlMessage& message) {
+std::vector<std::byte> Serialize(const ControlMessage& message) {
   return SerializeControl(message.timestamp, message.position, message.orientation);
 }
 
@@ -250,18 +246,7 @@ CommandMessage Deserialize<CommandMessage>(const std::vector<std::byte>& bytes) 
 }
 
 template <>
-AutomaticControlMessage Deserialize<AutomaticControlMessage>(
-    const std::vector<std::byte>& bytes) {
-  CheckSize(bytes, kControlBytes);
-  return {ReadTimestamp(bytes),
-          {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
-           ReadDouble(bytes, 2 * kDoubleBytes)},
-          {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
-           ReadDouble(bytes, 5 * kDoubleBytes)}};
-}
-
-template <>
-ManualControlMessage Deserialize<ManualControlMessage>(
+ControlMessage Deserialize<ControlMessage>(
     const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kControlBytes);
   return {ReadTimestamp(bytes),

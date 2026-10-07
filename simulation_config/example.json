@@ -18,6 +18,7 @@
   },
   "transport": {
     "local": { "address": "127.0.0.1", "port": 14560 },
+    "manual_local": { "address": "127.0.0.1", "port": 14561 },
     "peer": { "address": "127.0.0.1", "port": 14550 }
   },
   "syslog": { "address": "127.0.0.1", "port": 514 },
@@ -27,7 +28,7 @@
       "filters": [
         {
           "kind": "drop",
-          "message_type": "automatic_control",
+          "message_type": "control",
           "start_ms": 10000,
           "end_ms": 15000
         }
