@@ -21,9 +21,6 @@ class ControllerProtocol {
   }
 
   static Command Decode(const NetworkMessage& message) {
-    if (message.data.empty()) {
-      throw std::invalid_argument("Empty command");
-    }
     const std::vector<std::byte> payload(message.data.begin(), message.data.end() - 1);
     switch (message.type) {
       case MessageType::kCommand:

@@ -4,6 +4,7 @@ project(PixhawkSimulator LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
+find_package(Boost 1.75 REQUIRED COMPONENTS json)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -23,7 +24,9 @@ add_subdirectory(controller)
 add_subdirectory(scheduled_link)
 add_subdirectory(controller_protocol)
 add_subdirectory(udp_transport)
+add_subdirectory(syslog)
 add_subdirectory(simulation_runner)
+add_subdirectory(simulation_config)
 
 add_executable(pixhawk_simulator main.cpp)
-target_link_libraries(pixhawk_simulator PRIVATE simulation_runner udp_transport)
+target_link_libraries(pixhawk_simulator PRIVATE simulation_runner udp_transport simulation_config syslog_sender)

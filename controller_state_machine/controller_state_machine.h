@@ -28,8 +28,6 @@ class ControllerStateMachine {
                          TimePoint start_time,
                          Duration readiness_timeout = std::chrono::seconds{1});
 
-  ~ControllerStateMachine() = default;
-
   bool SetAutomaticControl(const Position& position,
                            const Orientation& orientation);
   bool SetManualControl(const Position& position,

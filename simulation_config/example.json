@@ -1,0 +1,49 @@
+{
+  "dynamic_model": {
+    "linear_speed_meters_per_second": 1.0,
+    "angular_speed_radians_per_second": 1.0
+  },
+  "battery": {
+    "max_capacity_amp_hours": 2.0,
+    "start_capacity_amp_hours": 2.0
+  },
+  "state_machine": {
+    "readiness_timeout_ms": 1000
+  },
+  "controller": {
+    "gnss_losses": [
+      { "start_ms": 5000, "duration_ms": 2000 },
+      { "start_ms": 12000, "duration_ms": 1000 }
+    ]
+  },
+  "transport": {
+    "local": { "address": "127.0.0.1", "port": 14560 },
+    "peer": { "address": "127.0.0.1", "port": 14550 }
+  },
+  "syslog": { "address": "127.0.0.1", "port": 514 },
+  "network": {
+    "inbound": {
+      "latency_ms": 20,
+      "filters": [
+        {
+          "kind": "drop",
+          "message_type": "automatic_control",
+          "start_ms": 10000,
+          "end_ms": 15000
+        }
+      ]
+    },
+    "outbound": {
+      "latency_ms": 50,
+      "filters": [
+        {
+          "kind": "delay",
+          "message_type": "attitude",
+          "start_ms": 10000,
+          "end_ms": 15000,
+          "delay_ms": 200
+        }
+      ]
+    }
+  }
+}

@@ -14,7 +14,7 @@ class ControllerTelemetryTest : public ::testing::Test {
  protected:
   const simulation::TimePoint start{42s};
   DynamicModel model;
-  BatteryModel battery;
+  BatteryModel battery{2.0, 2.0};
   Logger logger{start};
   ControllerStateMachine state_machine{model, logger, start};
   Controller<> controller{model, battery, state_machine, start};
@@ -53,6 +53,7 @@ TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
     }
     if (telemetry.global_position) {
       EXPECT_EQ(telemetry.global_position->timestamp, timestamp);
+      EXPECT_TRUE(telemetry.global_position->gnss_valid);
     }
     if (telemetry.battery_status) {
       EXPECT_EQ(telemetry.battery_status->timestamp, timestamp);
@@ -61,6 +62,69 @@ TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
                   2.0 - tick * 0.02 / 3600.0, 1e-11);
     }
   }
+}
+
+TEST_F(ControllerTelemetryTest, GnssLossIntervalsUseSampleTimesAndPreserveCadence) {
+  controller.AddGnssLoss(start + 700ms, 100ms);
+  controller.AddGnssLoss(start + 200ms, 200ms);
+  controller.AddGnssLoss(start + 300ms, 200ms);
+  controller.AddGnssLoss(start + 500ms, 100ms);
+  controller.AddGnssLoss(start + 110ms, 30ms);
+  controller.AddGnssLoss(start + 100ms, 0ms);
+  for (int tick = 1; tick <= 50; ++tick) {
+    const auto telemetry = Steps(1);
+    const auto elapsed = tick * 20ms;
+    EXPECT_EQ(telemetry.timestamp, start + elapsed);
+    EXPECT_TRUE(telemetry.attitude);
+    EXPECT_EQ(telemetry.global_position.has_value(), tick % 5 == 0);
+    EXPECT_EQ(telemetry.battery_status.has_value(), tick % 25 == 0);
+    EXPECT_EQ(telemetry.heartbeat.has_value(), tick % 50 == 0);
+    EXPECT_EQ(state_machine.GetState(), State::kGuarded);
+    if (telemetry.global_position) {
+      const bool lost = (200ms <= elapsed && elapsed < 600ms) || elapsed == 700ms;
+      EXPECT_EQ(telemetry.global_position->gnss_valid, !lost);
+    }
+  }
+}
+
+TEST_F(ControllerTelemetryTest, GnssLossKeepsManualFlightAndModelTelemetryUpdating) {
+  Manual();
+  ASSERT_TRUE(controller.SetManualControl({10.0, 0.0, 0.0}, {}));
+  const auto loss_start = controller.GetTime();
+  controller.AddGnssLoss(loss_start, 300ms);
+  for (int sample = 1; sample <= 4; ++sample) {
+    const auto telemetry = Steps(5);
+    ASSERT_TRUE(telemetry.global_position);
+    EXPECT_EQ(telemetry.global_position->gnss_valid, sample >= 3);
+    EXPECT_NEAR(telemetry.global_position->position.x_meters, sample * 0.1, 1e-12);
+    EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second, 1.0);
+    EXPECT_EQ(state_machine.GetState(), State::kManual);
+  }
+}
+
+TEST_F(ControllerTelemetryTest, GnssLossSupportsStartupAndAlreadyActiveIntervals) {
+  controller.AddGnssLoss(start - 100ms, 300ms);
+  auto telemetry = Steps(5);
+  ASSERT_TRUE(telemetry.global_position);
+  EXPECT_FALSE(telemetry.global_position->gnss_valid);
+  telemetry = Steps(5);
+  ASSERT_TRUE(telemetry.global_position);
+  EXPECT_TRUE(telemetry.global_position->gnss_valid);
+}
+
+TEST_F(ControllerTelemetryTest, GnssLossRejectsInvalidRanges) {
+  using TimePoint = simulation::TimePoint;
+  using Duration = simulation::Duration;
+  EXPECT_THROW(controller.AddGnssLoss(start, -1ns), std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(start, Duration::min()), std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(TimePoint::max(), 1ns), std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(start, Duration::max()), std::invalid_argument);
+  EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::max(), 0ns));
+  EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::max() - 1ns, 1ns));
+  EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::min(), Duration::max()));
+  const auto telemetry = Steps(5);
+  ASSERT_TRUE(telemetry.global_position);
+  EXPECT_TRUE(telemetry.global_position->gnss_valid);
 }
 
 TEST_F(ControllerTelemetryTest, PartialStepsPreserveAllTelemetryBoundaries) {
@@ -89,7 +153,7 @@ TEST_F(ControllerTelemetryTest, PartialStepsPreserveAllTelemetryBoundaries) {
   EXPECT_FALSE(remainder.has_telemetry);
   EXPECT_EQ(controller.GetTime(), start + 1013ms);
   EXPECT_FALSE(controller.Process(start + 1013ms).has_telemetry);
-  EXPECT_THROW(controller.Process(start + 1012ms), std::invalid_argument);
+  EXPECT_DEBUG_DEATH(controller.Process(start + 1012ms), "");
   const auto telemetry = controller.Process(start + 1033ms);
   ASSERT_TRUE(telemetry.attitude);
   EXPECT_EQ(telemetry.attitude->timestamp, start + 1020ms);

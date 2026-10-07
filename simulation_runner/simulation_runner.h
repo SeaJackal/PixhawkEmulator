@@ -1,42 +1,67 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
-#include <cstddef>
+#include <functional>
+#include <iostream>
+#include <map>
 #include <thread>
 #include <utility>
 
 #include "controller_protocol.h"
-#include "scheduled_link.h"
+#include "logger.h"
+#include "network_emulator.h"
 
-template <typename ControllerType, typename Transport,
-          typename Clock = std::chrono::steady_clock>
+template <typename ControllerType, typename Transport>
 class SimulationRunner {
  public:
   using TimePoint = simulation::TimePoint;
+  using RecordSink = std::function<void(const Logger::Record&)>;
 
   SimulationRunner(ControllerType& controller, Transport& transport,
-                   Clock& clock, ScheduledLink inbound, ScheduledLink outbound)
+                   NetworkEmulator inbound, NetworkEmulator outbound)
       : controller_(controller),
         transport_(transport),
-        clock_(clock),
         inbound_(std::move(inbound)),
         outbound_(std::move(outbound)) {}
 
+  SimulationRunner(ControllerType& controller, Transport& transport,
+                   NetworkEmulator inbound, NetworkEmulator outbound,
+                   Logger& logger, RecordSink record_sink = {})
+      : SimulationRunner(controller, transport, std::move(inbound),
+                         std::move(outbound)) {
+    logger_ = &logger;
+    record_sink_ = std::move(record_sink);
+  }
+
   void RunOnce() {
+    DrainLogs();
     Receive();
+    const auto deadline =
+        tasks_.empty() ? TimePoint::max() : tasks_.begin()->first;
     const auto telemetry =
-        controller_.Process(std::max(controller_.GetTime(), NextDeadline()));
+        controller_.Process(std::max(controller_.GetTime(), deadline));
+    DrainLogs();
     if (telemetry.has_telemetry) {
       for (auto& message : ControllerProtocol::Encode(telemetry)) {
-        outbound_.Submit(std::move(message));
+        if (auto delivery = outbound_.Process(std::move(message))) {
+          tasks_.emplace(delivery->arrival_time,
+                         [&transport = transport_,
+                          message = std::move(delivery->message)] {
+                           transport.Send(message.data);
+                         });
+        }
       }
+      return;
     }
-    std::this_thread::sleep_until(telemetry.timestamp);
-    Flush();
-    while (auto delivery = inbound_.TakeNextDue(clock_.now())) {
-      ControllerProtocol::Deliver(controller_, delivery->message);
-    }
+    assert(!tasks_.empty());
+    auto task = tasks_.begin();
+    std::this_thread::sleep_until(task->first);
+    auto callback = std::move(task->second);
+    tasks_.erase(task);
+    callback();
+    DrainLogs();
   }
 
   template <typename StopRequested>
@@ -44,18 +69,20 @@ class SimulationRunner {
     while (!stop_requested()) {
       RunOnce();
     }
+    DrainLogs();
   }
 
  private:
-  TimePoint NextDeadline() const {
-    auto next = TimePoint::max();
-    if (const auto deadline = inbound_.NextDeadline()) {
-      next = std::min(next, *deadline);
+  void DrainLogs() {
+    if (!logger_) return;
+    for (const auto& record : logger_->TakeRecords()) {
+      if (!record_sink_) continue;
+      try {
+        record_sink_(record);
+      } catch (const std::exception& error) {
+        std::cerr << "syslog: " << error.what() << '\n';
+      }
     }
-    if (const auto deadline = outbound_.NextDeadline()) {
-      next = std::min(next, *deadline);
-    }
-    return next;
   }
 
   void Receive() {
@@ -64,19 +91,21 @@ class SimulationRunner {
       if (!bytes) break;
       NetworkMessage message(std::move(*bytes));
       ControllerProtocol::Decode(message);
-      inbound_.Submit(std::move(message));
-    }
-  }
-
-  void Flush() {
-    while (auto delivery = outbound_.TakeNextDue(clock_.now())) {
-      transport_.Send(delivery->message.data);
+      if (auto delivery = inbound_.Process(std::move(message))) {
+        tasks_.emplace(delivery->arrival_time,
+                       [&controller = controller_,
+                        message = std::move(delivery->message)] {
+                         ControllerProtocol::Deliver(controller, message);
+                       });
+      }
     }
   }
 
   ControllerType& controller_;
   Transport& transport_;
-  Clock& clock_;
-  ScheduledLink inbound_;
-  ScheduledLink outbound_;
+  NetworkEmulator inbound_;
+  NetworkEmulator outbound_;
+  std::multimap<TimePoint, std::function<void()>> tasks_;
+  Logger* logger_ = nullptr;
+  RecordSink record_sink_;
 };

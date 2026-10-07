@@ -4,7 +4,6 @@
 
 class BatteryModel {
  public:
-  static constexpr double kCapacityAmpHours = 2.0;
   static constexpr double kEmptyVoltageVolts = 9.0;
   static constexpr double kFullVoltageVolts = 12.6;
   static constexpr double kLowChargePercent = 20.0;
@@ -12,7 +11,7 @@ class BatteryModel {
 
   enum class Status { kOk, kLow, kCritical };
 
-  ~BatteryModel() = default;
+  BatteryModel(double max_capacity_amp_hours, double start_capacity_amp_hours);
 
   bool Process(double current_amps, simulation::Duration elapsed);
   void Reset();
@@ -22,5 +21,6 @@ class BatteryModel {
   [[nodiscard]] Status GetStatus() const;
 
  private:
-  double charge_amp_hours_ = kCapacityAmpHours;
+  double max_capacity_amp_hours_;
+  double charge_amp_hours_;
 };

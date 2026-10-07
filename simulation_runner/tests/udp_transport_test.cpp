@@ -138,27 +138,21 @@ TEST_F(UdpTest, OversizedSendThrowsStandardSystemError) {
 }
 
 TEST_F(UdpTest, RunnerDeliversCommandsAndReturnsTelemetryOverLoopback) {
-  struct Clock {
-    simulation::TimePoint time{};
-    simulation::TimePoint now() const { return time; }
-  } clock;
   const simulation::TimePoint start{};
   DynamicModel model;
-  BatteryModel battery;
+  BatteryModel battery{2.0, 2.0};
   Logger logger{start};
   ControllerStateMachine state_machine{model, logger, start, 0ms};
   Controller controller{model, battery, state_machine, start};
   UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
-  SimulationRunner runner{controller, transport, clock,
-      ScheduledLink{NetworkEmulator{2ms}}, ScheduledLink{NetworkEmulator{3ms}}};
+  SimulationRunner runner{controller, transport,
+      NetworkEmulator{2ms}, NetworkEmulator{3ms}};
   using Command = ControllerStateMachine::CommandType;
   const auto local = transport.LocalEndpoint();
   Send(local, NetworkMessage{CommandMessage{start + 5ms, Command::kUnguard}}.data);
   Send(local, NetworkMessage{CommandMessage{start + 6ms, Command::kToManual}}.data);
   Send(local, NetworkMessage{ManualControlMessage{start + 7ms, {1, 0, 0}, {}}}.data);
-  for (const auto elapsed : {7ms, 8ms, 9ms, 20ms, 23ms, 40ms, 43ms,
-                             60ms, 63ms, 80ms, 83ms, 100ms, 103ms}) {
-    clock.time = start + elapsed;
+  for (int i = 0; i < 14; ++i) {
     runner.RunOnce();
   }
   EXPECT_EQ(state_machine.GetState(), ControllerStateMachine::State::kManual);
@@ -186,12 +180,14 @@ TEST_F(UdpTest, RunnerSleepsUntilTelemetryAfterDrainingSocket) {
       simulation_start + 1s, ControllerStateMachine::CommandType::kHold}}.data;
   for (int i = 0; i < 100; ++i) Send(transport.LocalEndpoint(), bytes);
   DynamicModel model;
-  BatteryModel battery;
+  BatteryModel battery{2.0, 2.0};
   Logger logger{simulation_start};
   ControllerStateMachine state_machine{model, logger, simulation_start};
   Controller controller{model, battery, state_machine, simulation_start};
-  SimulationRunner runner{controller, transport, clock,
-      ScheduledLink{NetworkEmulator{0ms}}, ScheduledLink{NetworkEmulator{0ms}}};
+  SimulationRunner runner{controller, transport,
+      NetworkEmulator{0ms}, NetworkEmulator{0ms}};
+  runner.RunOnce();
+  EXPECT_FALSE(transport.Receive());
   runner.RunOnce();
   EXPECT_GE(clock.now() - simulation_start, 20ms);
   EXPECT_EQ(controller.GetTime(), simulation_start + 20ms);

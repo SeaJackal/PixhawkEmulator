@@ -1,10 +1,13 @@
 #include "controller.h"
+#include "simulation_config.h"
 #include "simulation_runner.h"
+#include "syslog.h"
 #include "udp_transport.h"
 
 #include <charconv>
 #include <csignal>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -29,45 +32,77 @@ int Number(std::string_view text, int maximum) {
 
 }
 
-int main(int argc, char** argv) {
-  UdpEndpoint local{"127.0.0.1", 14560};
-  UdpEndpoint peer{"127.0.0.1", 14550};
-  simulation::Duration inbound_latency{};
-  simulation::Duration outbound_latency{};
+int main(int argc, char** argv) try {
+  const char* config_path = nullptr;
   for (int index = 1; index < argc; ++index) {
     const std::string_view option = argv[index];
     if (option == "--help") {
-      std::cout << "pixhawk_simulator [--bind-address IPv4] [--bind-port PORT]\n"
+      std::cout << "pixhawk_simulator [--config FILE]\n"
+                   "                  [--bind-address IPv4] [--bind-port PORT]\n"
                    "                  [--peer-address IPv4] [--peer-port PORT]\n"
-                   "                  [--inbound-latency-ms MS] [--outbound-latency-ms MS]\n";
+                   "                  [--inbound-latency-ms MS] [--outbound-latency-ms MS]\n"
+                   "Command-line options override config file values.\n";
       return 0;
     }
     if (++index == argc) throw std::invalid_argument("Missing option value");
-    const std::string_view value = argv[index];
+    if (option == "--config") {
+      if (config_path) throw std::invalid_argument("Duplicate --config option");
+      config_path = argv[index];
+    }
+  }
+  auto config = config_path ? LoadSimulationConfig(config_path) : SimulationConfig{};
+  auto& local = config.transport.local;
+  auto& peer = config.transport.peer;
+  for (int index = 1; index < argc; index += 2) {
+    const std::string_view option = argv[index];
+    if (option == "--config") continue;
+    const std::string_view value = argv[index + 1];
     if (option == "--bind-address") local.address = value;
     else if (option == "--peer-address") peer.address = value;
     else if (option == "--bind-port") local.port = Number(value, 65535);
     else if (option == "--peer-port") peer.port = Number(value, 65535);
     else if (option == "--inbound-latency-ms") {
-      inbound_latency = std::chrono::milliseconds{Number(value, 2147483647)};
+      config.network.inbound.latency = std::chrono::milliseconds{Number(value, 2147483647)};
     } else if (option == "--outbound-latency-ms") {
-      outbound_latency = std::chrono::milliseconds{Number(value, 2147483647)};
+      config.network.outbound.latency = std::chrono::milliseconds{Number(value, 2147483647)};
     } else {
       throw std::invalid_argument("Unknown option: " + std::string(option));
     }
   }
   if (peer.port == 0) throw std::invalid_argument("Peer port must be nonzero");
-  DynamicModel model;
-  BatteryModel battery;
+  DynamicModel model{config.dynamic_model.linear_speed_meters_per_second,
+                     config.dynamic_model.angular_speed_radians_per_second};
+  BatteryModel battery{config.battery.max_capacity_amp_hours,
+                       config.battery.start_capacity_amp_hours};
   std::chrono::steady_clock clock;
   const auto start = clock.now();
   Logger logger{start};
-  ControllerStateMachine state_machine{model, logger, start};
+  ControllerStateMachine state_machine{model, logger, start,
+                                       config.state_machine.readiness_timeout};
   Controller controller{model, battery, state_machine, start};
+  for (const auto& loss : config.controller.gnss_losses) {
+    if (start > simulation::TimePoint::max() - loss.start) {
+      throw std::invalid_argument("GNSS loss start exceeds simulation clock range");
+    }
+    controller.AddGnssLoss(start + loss.start, loss.duration);
+  }
   UdpTransport transport{local, peer};
-  SimulationRunner runner{controller, transport, clock,
-                          ScheduledLink{NetworkEmulator{inbound_latency}},
-                          ScheduledLink{NetworkEmulator{outbound_latency}}};
+  std::unique_ptr<SyslogSender> syslog;
+  std::function<void(const Logger::Record&)> record_sink;
+  if (config.syslog) {
+    try {
+      syslog = std::make_unique<SyslogSender>(*config.syslog, start);
+      record_sink = [&syslog](const Logger::Record& record) {
+        syslog->Send(record);
+      };
+    } catch (const std::exception& error) {
+      std::cerr << "syslog disabled: " << error.what() << '\n';
+    }
+  }
+  SimulationRunner runner{controller, transport,
+                          CreateNetworkEmulator(config.network.inbound, start),
+                          CreateNetworkEmulator(config.network.outbound, start),
+                          logger, std::move(record_sink)};
   std::signal(SIGINT, Stop);
   std::signal(SIGTERM, Stop);
   const auto bound = transport.LocalEndpoint();
@@ -75,4 +110,7 @@ int main(int argc, char** argv) {
             << "; peer " << peer.address << ':' << peer.port
             << "; timestamps use steady_clock\n" << std::flush;
   runner.Run([] { return stop_requested != 0; });
+} catch (const std::exception& error) {
+  std::cerr << "pixhawk_simulator: " << error.what() << '\n';
+  return 1;
 }

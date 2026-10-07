@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
+#include <vector>
 
 #include "battery_model.h"
 #include "controller_state_machine.h"
@@ -27,8 +28,8 @@ class Controller {
       std::min({kHeartbeatPeriod, kAttitudePeriod, kGlobalPositionPeriod,
                 kBatteryStatusPeriod});
 
-  Controller(Model& model, Battery& battery,
-             StateMachine& state_machine, TimePoint start_time);
+  Controller(Model& model, Battery& battery, StateMachine& state_machine,
+             TimePoint start_time);
   ~Controller() = default;
 
   Controller(const Controller&) = delete;
@@ -37,6 +38,7 @@ class Controller {
   Controller& operator=(Controller&&) = delete;
 
   bool Command(CommandType command);
+  void AddGnssLoss(TimePoint start, Duration duration);
   bool SetManualControl(const Position& position,
                         const Orientation& orientation);
   bool SetAutomaticControl(const Position& position,
@@ -59,12 +61,17 @@ class Controller {
   TimePoint next_attitude_;
   TimePoint next_global_position_;
   TimePoint next_battery_status_;
+  struct GnssLoss {
+    TimePoint start;
+    TimePoint end;
+  };
+  std::vector<GnssLoss> gnss_losses_;
 };
 
 template <typename Model, typename Battery, typename StateMachine>
-Controller<Model, Battery, StateMachine>::Controller(Model& model, Battery& battery,
-                       StateMachine& state_machine,
-                       TimePoint start_time)
+Controller<Model, Battery, StateMachine>::Controller(
+    Model& model, Battery& battery, StateMachine& state_machine,
+    TimePoint start_time)
     : model_(model),
       battery_(battery),
       state_machine_(state_machine),
@@ -75,27 +82,35 @@ Controller<Model, Battery, StateMachine>::Controller(Model& model, Battery& batt
       next_battery_status_(start_time + kBatteryStatusPeriod) {}
 
 template <typename Model, typename Battery, typename StateMachine>
+void Controller<Model, Battery, StateMachine>::AddGnssLoss(
+    TimePoint start, Duration duration) {
+  if (duration < Duration::zero() || start > TimePoint::max() - duration) {
+    throw std::invalid_argument("Invalid GNSS loss duration or timestamp overflow");
+  }
+  if (duration == Duration::zero()) return;
+  gnss_losses_.push_back({start, start + duration});
+}
+
+template <typename Model, typename Battery, typename StateMachine>
 bool Controller<Model, Battery, StateMachine>::Command(CommandType command) {
   return state_machine_.Command(command);
 }
 
 template <typename Model, typename Battery, typename StateMachine>
-bool Controller<Model, Battery, StateMachine>::SetManualControl(const Position& position,
-                                  const Orientation& orientation) {
+bool Controller<Model, Battery, StateMachine>::SetManualControl(
+    const Position& position, const Orientation& orientation) {
   return state_machine_.SetManualControl(position, orientation);
 }
 
 template <typename Model, typename Battery, typename StateMachine>
-bool Controller<Model, Battery, StateMachine>::SetAutomaticControl(const Position& position,
-                                     const Orientation& orientation) {
+bool Controller<Model, Battery, StateMachine>::SetAutomaticControl(
+    const Position& position, const Orientation& orientation) {
   return state_machine_.SetAutomaticControl(position, orientation);
 }
 
 template <typename Model, typename Battery, typename StateMachine>
 Telemetry Controller<Model, Battery, StateMachine>::Process(TimePoint until) {
-  if (until < time_) {
-    throw std::invalid_argument("Cannot rewind controller time");
-  }
+  assert(until >= time_);
   const auto endpoint = std::min(until, NextTelemetryTime());
   while (time_ < endpoint) {
     const double current_amps = model_.GetCurrentAmps();
@@ -123,8 +138,12 @@ Telemetry Controller<Model, Battery, StateMachine>::CollectTelemetry() {
     next_attitude_ += kAttitudePeriod;
   }
   if (time_ == next_global_position_) {
+    const bool gnss_valid = std::none_of(
+        gnss_losses_.begin(), gnss_losses_.end(), [this](const GnssLoss& loss) {
+          return loss.start <= time_ && time_ < loss.end;
+        });
     telemetry.global_position = GlobalPositionMessage{
-        time_, model_.GetPosition(), model_.GetLinearVelocity()};
+        time_, model_.GetPosition(), model_.GetLinearVelocity(), gnss_valid};
     next_global_position_ += kGlobalPositionPeriod;
   }
   if (time_ == next_battery_status_) {
@@ -134,7 +153,8 @@ Telemetry Controller<Model, Battery, StateMachine>::CollectTelemetry() {
     next_battery_status_ += kBatteryStatusPeriod;
   }
   telemetry.has_telemetry = telemetry.heartbeat.has_value() ||
-      telemetry.attitude.has_value() || telemetry.global_position.has_value() ||
-      telemetry.battery_status.has_value();
+                            telemetry.attitude.has_value() ||
+                            telemetry.global_position.has_value() ||
+                            telemetry.battery_status.has_value();
   return telemetry;
 }

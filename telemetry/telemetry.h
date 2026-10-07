@@ -22,6 +22,7 @@ struct GlobalPositionMessage {
   simulation::TimePoint timestamp;
   Position position;
   LinearVelocity velocity;
+  bool gnss_valid = true;
 };
 
 struct BatteryStatusMessage {

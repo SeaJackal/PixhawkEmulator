@@ -18,7 +18,7 @@ constexpr std::size_t kBatteryFieldsBytes = 3 * kDoubleBytes;
 constexpr std::size_t kHeartbeatBytes = kHeartbeatFieldsBytes + kTimestampBytes;
 constexpr std::size_t kCommandBytes = kCommandFieldsBytes + kTimestampBytes;
 constexpr std::size_t kAttitudeBytes = kSixDoubleFieldsBytes + kTimestampBytes;
-constexpr std::size_t kGlobalPositionBytes = kSixDoubleFieldsBytes + kTimestampBytes;
+constexpr std::size_t kGlobalPositionBytes = kSixDoubleFieldsBytes + 1 + kTimestampBytes;
 constexpr std::size_t kControlBytes = kSixDoubleFieldsBytes + kTimestampBytes;
 constexpr std::size_t kBatteryStatusBytes = kBatteryFieldsBytes + kTimestampBytes;
 constexpr std::size_t kTelemetryBytes = kPresenceMaskBytes + kHeartbeatBytes +
@@ -213,6 +213,7 @@ std::vector<std::byte> Serialize(const GlobalPositionMessage& message) {
   AppendDouble(bytes, message.velocity.x_meters_per_second);
   AppendDouble(bytes, message.velocity.y_meters_per_second);
   AppendDouble(bytes, message.velocity.z_meters_per_second);
+  bytes.push_back(message.gnss_valid ? std::byte{1} : std::byte{0});
   AppendTimestamp(bytes, message.timestamp);
   return bytes;
 }
@@ -293,11 +294,16 @@ template <>
 GlobalPositionMessage Deserialize<GlobalPositionMessage>(
     const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kGlobalPositionBytes);
+  if (bytes[kSixDoubleFieldsBytes] != std::byte{0} &&
+      bytes[kSixDoubleFieldsBytes] != std::byte{1}) {
+    throw std::invalid_argument("Invalid GNSS validity flag");
+  }
   return {ReadTimestamp(bytes),
           {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
            ReadDouble(bytes, 2 * kDoubleBytes)},
           {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
-           ReadDouble(bytes, 5 * kDoubleBytes)}};
+           ReadDouble(bytes, 5 * kDoubleBytes)},
+          bytes[kSixDoubleFieldsBytes] == std::byte{1}};
 }
 
 template <>

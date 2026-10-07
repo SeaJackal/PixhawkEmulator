@@ -1,7 +1,20 @@
 #include "network_emulator.h"
 
 #include <cassert>
+#include <stdexcept>
 #include <utility>
+
+namespace {
+
+simulation::TimePoint AddDelay(simulation::TimePoint timestamp,
+                              simulation::Duration delay) {
+  if (timestamp > simulation::TimePoint::max() - delay) {
+    throw std::invalid_argument("Arrival time exceeds simulation clock range");
+  }
+  return timestamp + delay;
+}
+
+}
 
 NetworkEmulator::NetworkEmulator(Duration latency) : latency_(latency) {
   assert(latency >= Duration::zero());
@@ -9,7 +22,7 @@ NetworkEmulator::NetworkEmulator(Duration latency) : latency_(latency) {
 
 std::optional<NetworkMessageInfo> NetworkEmulator::Process(
     NetworkMessage message) const {
-  auto arrival_time = message.timestamp + latency_;
+  auto arrival_time = AddDelay(message.timestamp, latency_);
   for (const auto& filter : filters_) {
     if (filter.type != message.type || message.timestamp < filter.start ||
         message.timestamp >= filter.end) {
@@ -18,7 +31,7 @@ std::optional<NetworkMessageInfo> NetworkEmulator::Process(
     if (filter.kind == FilterKind::kDrop) {
       return std::nullopt;
     }
-    arrival_time += filter.delay;
+    arrival_time = AddDelay(arrival_time, filter.delay);
     break;
   }
   return NetworkMessageInfo{std::move(message), arrival_time};

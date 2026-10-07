@@ -166,6 +166,33 @@ TEST(NetworkOutputEmulatorTest, FiltersPersistAcrossRepeatedAndOutOfOrderCalls) 
   }
 }
 
+TEST(NetworkOutputEmulatorTest, ChecksLatencyAtTimestampLimits) {
+  const NetworkEmulator emulator{10ms};
+  const auto boundary = TimePoint::max() - 10ms;
+  const auto result = emulator.Process(MessageAt(boundary));
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->arrival_time, TimePoint::max());
+  EXPECT_THROW(emulator.Process(MessageAt(boundary + 1ns)),
+               std::invalid_argument);
+  const auto oldest = emulator.Process(MessageAt(TimePoint::min()));
+  ASSERT_TRUE(oldest);
+  EXPECT_EQ(oldest->arrival_time, TimePoint::min() + 10ms);
+  const auto latest = NetworkEmulator{0ms}.Process(MessageAt(TimePoint::max()));
+  ASSERT_TRUE(latest);
+  EXPECT_EQ(latest->arrival_time, TimePoint::max());
+}
+
+TEST(NetworkOutputEmulatorTest, ChecksFilterDelayAfterLatency) {
+  NetworkEmulator emulator{1ms};
+  const auto boundary = TimePoint::max() - 11ms;
+  emulator.AddDelayFilter(boundary, TimePoint::max(), Type::kHeartbeat, 10ms);
+  const auto result = emulator.Process(MessageAt(boundary));
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result->arrival_time, TimePoint::max());
+  EXPECT_THROW(emulator.Process(MessageAt(boundary + 1ns)),
+               std::invalid_argument);
+}
+
 TEST(NetworkOutputEmulatorTest, RejectsNegativeLatency) {
   EXPECT_DEBUG_DEATH(NetworkEmulator{-1ms}, "");
 }

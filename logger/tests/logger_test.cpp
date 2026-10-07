@@ -30,3 +30,28 @@ TEST(LoggerTest, ReadingDoesNotConsumeAndClearAllowsReuse) {
   logger.Log(Logger::Level::kInfo, {}, "second");
   EXPECT_EQ(logger.GetText(), "[0.000000000] [INFO] second\n");
 }
+
+TEST(LoggerTest, TakingRecordsPreservesHistoryAndConsumesInOrder) {
+  const Logger::TimePoint start{std::chrono::seconds{42}};
+  Logger logger{start};
+  EXPECT_TRUE(logger.TakeRecords().empty());
+  logger.Log(Logger::Level::kInfo, start, "first");
+  logger.Log(Logger::Level::kError, start + std::chrono::seconds{1}, "second");
+  const auto text = logger.GetText();
+  const auto records = logger.TakeRecords();
+  ASSERT_EQ(records.size(), 2u);
+  EXPECT_EQ(records[0].level, Logger::Level::kInfo);
+  EXPECT_EQ(records[0].timestamp, start);
+  EXPECT_EQ(records[0].message, "first");
+  EXPECT_EQ(records[1].level, Logger::Level::kError);
+  EXPECT_EQ(records[1].timestamp, start + std::chrono::seconds{1});
+  EXPECT_EQ(records[1].message, "second");
+  EXPECT_TRUE(logger.TakeRecords().empty());
+  EXPECT_EQ(logger.GetText(), text);
+  logger.Log(Logger::Level::kWarning, start, "discard");
+  logger.Clear();
+  EXPECT_TRUE(logger.TakeRecords().empty());
+  EXPECT_TRUE(logger.GetText().empty());
+  logger.Log(Logger::Level::kDebug, start, "reused");
+  ASSERT_EQ(logger.TakeRecords().size(), 1u);
+}

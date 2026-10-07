@@ -34,8 +34,6 @@ class DynamicModel {
   explicit DynamicModel(double linear_speed_meters_per_second = 1.0,
                double angular_speed_radians_per_second = 1.0);
 
-  ~DynamicModel() = default;
-
   void Command(const Position& position, const Orientation& orientation);
   simulation::Duration Process(simulation::Duration elapsed);
 

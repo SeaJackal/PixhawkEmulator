@@ -79,8 +79,11 @@ TEST(TelemetrySerializationTest, AttitudeEncodesSixLittleEndianDoublesInFieldOrd
 TEST(TelemetrySerializationTest, PositionEncodesSixLittleEndianDoublesInFieldOrder) {
   const GlobalPositionMessage message{simulation::TimePoint{42s},
                                       {1.0, -2.0, 3.5}, {0.0, -0.0, 0.5}};
-  EXPECT_EQ(Serialize(message), WithTimestamp(kSixDoubles));
-  const auto decoded = Deserialize<GlobalPositionMessage>(WithTimestamp(kSixDoubles));
+  auto fields = kSixDoubles;
+  fields.push_back(std::byte{1});
+  EXPECT_EQ(Serialize(message), WithTimestamp(fields));
+  const auto decoded = Deserialize<GlobalPositionMessage>(WithTimestamp(fields));
+  EXPECT_TRUE(decoded.gnss_valid);
   EXPECT_DOUBLE_EQ(decoded.position.x_meters, 1.0);
   EXPECT_DOUBLE_EQ(decoded.position.y_meters, -2.0);
   EXPECT_DOUBLE_EQ(decoded.position.z_meters, 3.5);
@@ -103,6 +106,44 @@ TEST(TelemetrySerializationTest, BatteryEncodesVoltageCurrentAndCharge) {
   EXPECT_DOUBLE_EQ(decoded.current_amps, -2.0);
   EXPECT_DOUBLE_EQ(decoded.charge_amp_hours, 0.5);
   EXPECT_EQ(decoded.timestamp, simulation::TimePoint{42s});
+}
+
+TEST(TelemetrySerializationTest, GnssValiditySurvivesPacketsAndAggregateTelemetry) {
+  for (const bool valid : {false, true}) {
+    const GlobalPositionMessage message{simulation::TimePoint{42s},
+                                        {1.0, -2.0, 3.5}, {0.0, -0.0, 0.5}, valid};
+    auto fields = kSixDoubles;
+    fields.push_back(valid ? std::byte{1} : std::byte{0});
+    const auto expected = WithTimestamp(fields);
+    EXPECT_EQ(Serialize(message), expected);
+    EXPECT_EQ(expected.size(), 57u);
+    EXPECT_EQ(Deserialize<GlobalPositionMessage>(expected).gnss_valid, valid);
+    auto packet_bytes = expected;
+    packet_bytes.push_back(std::byte{2});
+    const NetworkMessage packet{packet_bytes};
+    EXPECT_EQ(packet.type, MessageType::kGlobalPosition);
+    EXPECT_EQ(packet.timestamp, message.timestamp);
+    EXPECT_EQ(NetworkMessage{message}.data, packet_bytes);
+    Telemetry telemetry;
+    telemetry.global_position = message;
+    telemetry.battery_status = BatteryStatusMessage{message.timestamp, 12.0, 1.0, 2.0};
+    std::vector<std::byte> aggregate{std::byte{0x0c}};
+    aggregate.insert(aggregate.end(), expected.begin(), expected.end());
+    const auto battery = Serialize(*telemetry.battery_status);
+    aggregate.insert(aggregate.end(), battery.begin(), battery.end());
+    EXPECT_EQ(Serialize(telemetry), aggregate);
+  }
+}
+
+TEST(TelemetryDeserializationTest, RejectsInvalidGnssValidityFlags) {
+  auto bytes = Serialize(GlobalPositionMessage{{}, {}, {}});
+  for (const auto flag : {2, 255}) {
+    bytes[48] = static_cast<std::byte>(flag);
+    EXPECT_THROW(Deserialize<GlobalPositionMessage>(bytes), std::invalid_argument);
+    auto packet = bytes;
+    packet.push_back(std::byte{2});
+    EXPECT_THROW(NetworkMessage{packet}, std::invalid_argument);
+  }
 }
 
 TEST(ControlSerializationTest, EncodesAndDecodesEveryCommand) {
