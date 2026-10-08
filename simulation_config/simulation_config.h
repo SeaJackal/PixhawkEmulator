@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string_view>
 #include <vector>
 
+#include "message_type.h"
 #include "network_emulator.h"
+#include "simulation_time.h"
 #include "udp_transport.h"
 
 struct DynamicModelConfig {
@@ -14,18 +17,22 @@ struct DynamicModelConfig {
 };
 
 struct BatteryConfig {
-  double max_capacity_amp_hours = 2.0;
-  double start_capacity_amp_hours = 2.0;
+  static constexpr double kDefaultCapacityAmpHours = 2.0;
+  double max_capacity_amp_hours = kDefaultCapacityAmpHours;
+  double start_capacity_amp_hours = kDefaultCapacityAmpHours;
 };
 
 struct StateMachineConfig {
-  simulation::Duration readiness_timeout = std::chrono::milliseconds{1000};
+  simulation::Duration readiness_timeout = std::chrono::seconds{1};
 };
 
 struct TransportConfig {
-  UdpEndpoint local{"127.0.0.1", 14560};
-  UdpEndpoint manual_local{"127.0.0.1", 14561};
-  UdpEndpoint peer{"127.0.0.1", 14550};
+  static constexpr std::uint16_t kDefaultLocalPort = 14560;
+  static constexpr std::uint16_t kDefaultManualPort = 14561;
+  static constexpr std::uint16_t kDefaultPeerPort = 14550;
+  UdpEndpoint local{"127.0.0.1", kDefaultLocalPort};
+  UdpEndpoint manual_local{"127.0.0.1", kDefaultManualPort};
+  UdpEndpoint peer{"127.0.0.1", kDefaultPeerPort};
 };
 
 struct GnssLossConfig {

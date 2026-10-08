@@ -6,7 +6,8 @@
 
 struct CommandMessage {
   simulation::TimePoint timestamp;
-  ControllerStateMachine::CommandType command;
+  ControllerStateMachine::CommandType command =
+      ControllerStateMachine::CommandType::kUnguard;
 };
 
 struct ControlMessage {

@@ -1,13 +1,13 @@
 #pragma once
 
-#include "message_type.h"
-#include "simulation_time.h"
-#include "telemetry_serialization.h"
-
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+#include "message_type.h"
+#include "simulation_time.h"
+#include "telemetry_serialization.h"
 
 struct NetworkMessage {
   explicit NetworkMessage(std::vector<std::byte> bytes)
@@ -15,7 +15,8 @@ struct NetworkMessage {
     if (data.empty()) {
       throw std::invalid_argument("Missing message type");
     }
-    type = static_cast<MessageType>(std::to_integer<unsigned char>(data.back()));
+    type =
+        static_cast<MessageType>(std::to_integer<unsigned char>(data.back()));
     const std::vector<std::byte> payload(data.begin(), data.end() - 1);
     switch (type) {
       case MessageType::kHeartbeat:
@@ -46,7 +47,8 @@ struct NetworkMessage {
 
   template <typename Message>
   NetworkMessage(const Message& message)
-      : timestamp(message.timestamp), type(GetType<Message>()),
+      : timestamp(message.timestamp),
+        type(GetType<Message>()),
         data(Serialize(message)) {
     data.push_back(static_cast<std::byte>(type));
   }

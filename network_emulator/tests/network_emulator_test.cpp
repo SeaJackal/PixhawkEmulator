@@ -1,10 +1,19 @@
 #include "network_emulator.h"
 
+#include <gtest/gtest-death-test.h>
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
+
+#include "control_messages.h"
+#include "controller_state_machine.h"
+#include "message_type.h"
+#include "network_message.h"
+#include "simulation_time.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -12,9 +21,9 @@ using namespace std::chrono_literals;
 using TimePoint = simulation::TimePoint;
 using Type = MessageType;
 
-constexpr std::array kTypes{Type::kHeartbeat, Type::kAttitude,
+constexpr std::array kTypes{Type::kHeartbeat,      Type::kAttitude,
                             Type::kGlobalPosition, Type::kBatteryStatus,
-                            Type::kCommand, Type::kControl};
+                            Type::kCommand,        Type::kControl};
 
 NetworkMessage MessageAt(TimePoint timestamp, Type type = Type::kHeartbeat) {
   switch (type) {
@@ -89,7 +98,8 @@ TEST(NetworkOutputEmulatorTest, DropMatchesOnlySpecifiedType) {
 
 TEST(NetworkOutputEmulatorTest, DelayIncludesStartAndExcludesEnd) {
   NetworkEmulator emulator{10ms};
-  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s}, Type::kHeartbeat, 100ms);
+  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s}, Type::kHeartbeat,
+                          100ms);
   for (const auto time : {999ms, 1000ms, 1999ms, 2000ms, 2001ms}) {
     const auto result = emulator.Process(MessageAt(TimePoint{time}));
     ASSERT_TRUE(result);
@@ -110,7 +120,8 @@ TEST(NetworkOutputEmulatorTest, DropIncludesStartAndExcludesEnd) {
 TEST(NetworkOutputEmulatorTest, EmptyIntervalsNeverMatch) {
   NetworkEmulator emulator{10ms};
   emulator.AddDropFilter(TimePoint{1s}, TimePoint{1s}, Type::kHeartbeat);
-  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{1s}, Type::kHeartbeat, 100ms);
+  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{1s}, Type::kHeartbeat,
+                          100ms);
   for (const auto time : {999ms, 1000ms, 1001ms}) {
     const auto result = emulator.Process(MessageAt(TimePoint{time}));
     ASSERT_TRUE(result);
@@ -118,21 +129,26 @@ TEST(NetworkOutputEmulatorTest, EmptyIntervalsNeverMatch) {
   }
 }
 
-TEST(NetworkOutputEmulatorTest, FirstMatchingDelayWinsWithoutSummingOrTakingMaximum) {
+TEST(NetworkOutputEmulatorTest,
+     FirstMatchingDelayWinsWithoutSummingOrTakingMaximum) {
   NetworkEmulator emulator{10ms};
   emulator.AddDelayFilter(TimePoint{0s}, TimePoint{1s}, Type::kHeartbeat, 1s);
   emulator.AddDelayFilter(TimePoint{0s}, TimePoint{3s}, Type::kAttitude, 1s);
-  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat, 100ms);
-  emulator.AddDelayFilter(TimePoint{0s}, TimePoint{4s}, Type::kHeartbeat, 500ms);
+  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat,
+                          100ms);
+  emulator.AddDelayFilter(TimePoint{0s}, TimePoint{4s}, Type::kHeartbeat,
+                          500ms);
   const auto result = emulator.Process(MessageAt(TimePoint{2s}));
   ASSERT_TRUE(result);
   EXPECT_EQ(result->arrival_time, TimePoint{2110ms});
 }
 
-TEST(NetworkOutputEmulatorTest, EarlierDelayOverridesLaterDropEvenWhenDelayIsZero) {
+TEST(NetworkOutputEmulatorTest,
+     EarlierDelayOverridesLaterDropEvenWhenDelayIsZero) {
   for (const auto delay : {0ms, 100ms}) {
     NetworkEmulator emulator{10ms};
-    emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat, delay);
+    emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat,
+                            delay);
     emulator.AddDropFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat);
     const auto result = emulator.Process(MessageAt(TimePoint{2s}));
     ASSERT_TRUE(result);
@@ -143,13 +159,16 @@ TEST(NetworkOutputEmulatorTest, EarlierDelayOverridesLaterDropEvenWhenDelayIsZer
 TEST(NetworkOutputEmulatorTest, EarlierDropOverridesLaterDelay) {
   NetworkEmulator emulator{10ms};
   emulator.AddDropFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat);
-  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat, 100ms);
+  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{3s}, Type::kHeartbeat,
+                          100ms);
   EXPECT_FALSE(emulator.Process(MessageAt(TimePoint{2s})));
 }
 
-TEST(NetworkOutputEmulatorTest, FiltersPersistAcrossRepeatedAndOutOfOrderCalls) {
+TEST(NetworkOutputEmulatorTest,
+     FiltersPersistAcrossRepeatedAndOutOfOrderCalls) {
   NetworkEmulator emulator{10ms};
-  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s}, Type::kHeartbeat, 100ms);
+  emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s}, Type::kHeartbeat,
+                          100ms);
   emulator.AddDropFilter(TimePoint{2s}, TimePoint{3s}, Type::kHeartbeat);
   for (const auto time : {3s, 2s, 1s, 0s, 1s, 2s, 3s}) {
     const auto result = emulator.Process(MessageAt(TimePoint{time}));
@@ -196,18 +215,19 @@ TEST(NetworkOutputEmulatorTest, RejectsNegativeLatency) {
 
 TEST(NetworkOutputEmulatorTest, RejectsNegativeDelay) {
   NetworkEmulator emulator{0ms};
-  EXPECT_DEBUG_DEATH(
-      emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s}, Type::kHeartbeat, -1ms),
-      "");
+  EXPECT_DEBUG_DEATH(emulator.AddDelayFilter(TimePoint{1s}, TimePoint{2s},
+                                             Type::kHeartbeat, -1ms),
+                     "");
 }
 
 TEST(NetworkOutputEmulatorTest, RejectsReversedIntervalsForBothKinds) {
   NetworkEmulator emulator{0ms};
+  EXPECT_DEBUG_DEATH(emulator.AddDelayFilter(TimePoint{2s}, TimePoint{1s},
+                                             Type::kHeartbeat, 0ms),
+                     "");
   EXPECT_DEBUG_DEATH(
-      emulator.AddDelayFilter(TimePoint{2s}, TimePoint{1s}, Type::kHeartbeat, 0ms),
+      emulator.AddDropFilter(TimePoint{2s}, TimePoint{1s}, Type::kHeartbeat),
       "");
-  EXPECT_DEBUG_DEATH(
-      emulator.AddDropFilter(TimePoint{2s}, TimePoint{1s}, Type::kHeartbeat), "");
 }
 
 }

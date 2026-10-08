@@ -1,12 +1,31 @@
-#include "controller.h"
 #include "simulation_runner.h"
 
 #include <gtest/gtest.h>
+#include <gtest/internal/gtest-port.h>
 
+#include <chrono>
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <limits>
+#include <optional>
+#include <stdexcept>
 #include <system_error>
+#include <utility>
+#include <vector>
+
+#include "battery_model.h"
+#include "control_messages.h"
+#include "controller.h"
+#include "controller_state_machine.h"
+#include "dynamic_model.h"
+#include "logger.h"
+#include "message_type.h"
+#include "network_emulator.h"
+#include "network_message.h"
+#include "simulation_time.h"
+#include "telemetry.h"
+#include "telemetry_serialization.h"
 
 namespace {
 
@@ -24,8 +43,12 @@ struct FakeTransport {
   std::size_t attempts = 0;
 
   std::optional<std::vector<std::byte>> Receive() {
-    if (fatal) throw std::runtime_error("Socket failure");
-    if (incoming.empty()) return std::nullopt;
+    if (fatal) {
+      throw std::runtime_error("Socket failure");
+    }
+    if (incoming.empty()) {
+      return std::nullopt;
+    }
     auto bytes = std::move(incoming.front());
     incoming.pop_front();
     return bytes;
@@ -33,10 +56,14 @@ struct FakeTransport {
 
   void Send(const std::vector<std::byte>& bytes) {
     ++attempts;
-    if (blocked) throw std::system_error(
-        std::make_error_code(std::errc::operation_would_block), "sendto");
+    if (blocked) {
+      throw std::system_error(
+          std::make_error_code(std::errc::operation_would_block), "sendto");
+    }
     sent.emplace_back(bytes);
-    if (on_send) on_send();
+    if (on_send) {
+      on_send();
+    }
   }
 
   template <typename Message>
@@ -58,7 +85,8 @@ class RunnerTest : public ::testing::Test {
 
   auto Runner(NetworkEmulator inbound = NetworkEmulator{0ms},
               NetworkEmulator outbound = NetworkEmulator{0ms}) {
-    return SimulationRunner{controller, transport, manual_transport, inbound, outbound};
+    return SimulationRunner{controller, transport, manual_transport,
+                            std::move(inbound), std::move(outbound)};
   }
 
   void Manual() {
@@ -81,7 +109,7 @@ TEST_F(RunnerTest, AdvancesBeforeCommandAndQueuesTelemetryBeforeSending) {
   EXPECT_NEAR(model.GetPosition().x_meters, 0.013, 1e-12);
   EXPECT_TRUE(transport.sent.empty());
   runner.RunOnce();
-  ASSERT_EQ(transport.sent.size(), 1u);
+  ASSERT_EQ(transport.sent.size(), 1U);
   EXPECT_EQ(transport.sent.front().timestamp, start + 20ms);
   EXPECT_EQ(controller.GetTime(), start + 20ms);
 }
@@ -109,14 +137,15 @@ TEST_F(RunnerTest, SamplesBeforeEqualTimeCommandsAndExecutesInInsertionOrder) {
     runner.RunOnce();
     EXPECT_EQ(transport.sent.size(), sent_before + i);
   }
-  ASSERT_EQ(transport.sent.size(), 63u);
+  ASSERT_EQ(transport.sent.size(), 63U);
   ASSERT_EQ(transport.sent[sent_before].type, MessageType::kHeartbeat);
   auto bytes = transport.sent[sent_before].data;
   bytes.pop_back();
   EXPECT_EQ(Deserialize<HeartbeatMessage>(bytes).state, State::kGuarded);
 }
 
-TEST_F(RunnerTest, ReordersCommandsByDeadlineAndAppliesLateCommandsWithoutRewind) {
+TEST_F(RunnerTest,
+       ReordersCommandsByDeadlineAndAppliesLateCommandsWithoutRewind) {
   Manual();
   NetworkEmulator emulator{0ms};
   emulator.AddDelayFilter(start, start + 5ms, MessageType::kControl, 10ms);
@@ -149,43 +178,44 @@ TEST_F(RunnerTest, DelaysAndDropsTelemetryIndependentlyOfCommands) {
   EXPECT_EQ(state_machine.GetState(), State::kGuarded);
   EXPECT_TRUE(transport.sent.empty());
   transport.on_send = [&] {
-    EXPECT_EQ(controller.GetTime(), transport.sent.size() == 1u
-        ? start + 45ms : start + 55ms);
+    EXPECT_EQ(controller.GetTime(),
+              transport.sent.size() == 1U ? start + 45ms : start + 55ms);
   };
   runner.RunOnce();
   runner.RunOnce();
-  ASSERT_EQ(transport.sent.size(), 2u);
+  ASSERT_EQ(transport.sent.size(), 2U);
   EXPECT_EQ(transport.sent[0].timestamp, start + 40ms);
   EXPECT_EQ(transport.sent[1].timestamp, start + 20ms);
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 60ms);
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 80ms);
-  EXPECT_EQ(transport.sent.size(), 2u);
+  EXPECT_EQ(transport.sent.size(), 2U);
 }
 
 TEST_F(RunnerTest, PropagatesBlockedSendWithoutRetry) {
   auto runner = Runner();
   transport.blocked = true;
   runner.RunOnce();
-  EXPECT_EQ(transport.attempts, 0u);
+  EXPECT_EQ(transport.attempts, 0U);
   EXPECT_THROW(runner.RunOnce(), std::system_error);
   EXPECT_EQ(controller.GetTime(), start + 20ms);
-  EXPECT_EQ(transport.attempts, 1u);
+  EXPECT_EQ(transport.attempts, 1U);
   transport.blocked = false;
   runner.RunOnce();
   EXPECT_TRUE(transport.sent.empty());
   runner.RunOnce();
-  ASSERT_EQ(transport.sent.size(), 1u);
+  ASSERT_EQ(transport.sent.size(), 1U);
   EXPECT_EQ(transport.sent.front().timestamp, start + 40ms);
 }
 
 TEST_F(RunnerTest, PropagatesMalformedUnexpectedAndNonFiniteInput) {
   auto runner = Runner();
-  transport.incoming.push_back({});
+  transport.incoming.emplace_back();
   transport.incoming.push_back({std::byte{255}});
   transport.Push(AttitudeMessage{start, {}, {}});
-  manual_transport.Push(ControlMessage{start, {std::numeric_limits<double>::infinity(), 0, 0}, {}});
+  manual_transport.Push(ControlMessage{
+      start, {std::numeric_limits<double>::infinity(), 0, 0}, {}});
   for (int i = 0; i < 4; ++i) {
     EXPECT_THROW(runner.RunOnce(), std::invalid_argument);
     EXPECT_EQ(controller.GetTime(), start);
@@ -194,17 +224,18 @@ TEST_F(RunnerTest, PropagatesMalformedUnexpectedAndNonFiniteInput) {
   EXPECT_TRUE(transport.incoming.empty());
 }
 
-TEST_F(RunnerTest, EmptyQueueProcessesOneTelemetryEventAndPropagatesFatalErrors) {
+TEST_F(RunnerTest,
+       EmptyQueueProcessesOneTelemetryEventAndPropagatesFatalErrors) {
   auto runner = Runner();
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 20ms);
   EXPECT_TRUE(transport.sent.empty());
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 20ms);
-  EXPECT_EQ(transport.sent.size(), 1u);
+  EXPECT_EQ(transport.sent.size(), 1U);
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 40ms);
-  EXPECT_EQ(transport.sent.size(), 1u);
+  EXPECT_EQ(transport.sent.size(), 1U);
   transport.fatal = true;
   EXPECT_THROW(runner.RunOnce(), std::runtime_error);
 }
@@ -215,7 +246,9 @@ TEST_F(RunnerTest, DispatchesAutomaticControlsAndPreservesStateOnRejection) {
   transport.Push(CommandMessage{start + 2ms, Command::kToAutomatic});
   transport.Push(ControlMessage{start + 3ms, {2.0, 0.0, 0.0}, {}});
   manual_transport.Push(ControlMessage{start + 4ms, {-1.0, 0.0, 0.0}, {}});
-  for (int i = 0; i < 4; ++i) runner.RunOnce();
+  for (int i = 0; i < 4; ++i) {
+    runner.RunOnce();
+  }
   EXPECT_EQ(state_machine.GetState(), State::kAutomatic);
   EXPECT_NEAR(model.GetPosition().x_meters, 0.017, 1e-12);
 }
@@ -243,13 +276,13 @@ TEST_F(RunnerTest, IdenticalControlPacketUsesSourceAndRespectsCurrentMode) {
 
 TEST_F(RunnerTest, RejectsInvalidInputBeforeMatchingDropFilters) {
   NetworkEmulator inbound{0ms};
-  for (const auto type : {MessageType::kControl, MessageType::kCommand,
-                          MessageType::kAttitude}) {
+  for (const auto type :
+       {MessageType::kControl, MessageType::kCommand, MessageType::kAttitude}) {
     inbound.AddDropFilter(start, start + 1s, type);
   }
   auto runner = Runner(inbound);
-  transport.Push(ControlMessage{start, {},
-      {0, std::numeric_limits<double>::quiet_NaN(), 0}});
+  transport.Push(ControlMessage{
+      start, {}, {0, std::numeric_limits<double>::quiet_NaN(), 0}});
   auto truncated = NetworkMessage{ControlMessage{start, {}, {}}}.data;
   truncated.erase(truncated.begin());
   transport.incoming.push_back(std::move(truncated));
@@ -321,8 +354,8 @@ TEST_F(RunnerTest, AlternatesPortsStartingWithAutomaticForEqualTimeCommands) {
   transport.Push(CommandMessage{start + 2ms, Command::kToAutomatic});
   manual_transport.Push(CommandMessage{start + 2ms, Command::kToManual});
   manual_transport.Push(CommandMessage{start + 2ms, Command::kToManual});
-  for (const auto expected : {State::kAutomatic, State::kManual,
-                              State::kAutomatic, State::kManual}) {
+  for (const auto expected :
+       {State::kAutomatic, State::kManual, State::kAutomatic, State::kManual}) {
     runner.RunOnce();
     EXPECT_EQ(controller.GetTime(), start + 2ms);
     EXPECT_EQ(state_machine.GetState(), expected);
@@ -360,7 +393,7 @@ TEST_F(RunnerTest, SleepsUntilScheduledSendDeadline) {
   ControllerStateMachine local_state{model, local_logger, before};
   Controller local_controller{model, battery, local_state, before};
   SimulationRunner runner{local_controller, transport, manual_transport,
-      NetworkEmulator{0ms}, NetworkEmulator{5ms}};
+                          NetworkEmulator{0ms}, NetworkEmulator{5ms}};
   transport.on_send = [&] {
     EXPECT_GE(std::chrono::steady_clock::now(), before + 25ms);
     EXPECT_EQ(local_controller.GetTime(), before + 25ms);
@@ -368,10 +401,11 @@ TEST_F(RunnerTest, SleepsUntilScheduledSendDeadline) {
   runner.RunOnce();
   EXPECT_TRUE(transport.sent.empty());
   runner.RunOnce();
-  ASSERT_EQ(transport.sent.size(), 1u);
+  ASSERT_EQ(transport.sent.size(), 1U);
 }
 
-TEST_F(RunnerTest, ExecutesOverdueTasksChronologicallyWithControllerAdvancement) {
+TEST_F(RunnerTest,
+       ExecutesOverdueTasksChronologicallyWithControllerAdvancement) {
   Manual();
   auto runner = Runner(NetworkEmulator{0ms}, NetworkEmulator{5ms});
   manual_transport.Push(ControlMessage{start + 30ms, {1, 0, 0}, {}});
@@ -383,7 +417,7 @@ TEST_F(RunnerTest, ExecutesOverdueTasksChronologicallyWithControllerAdvancement)
     EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, 0.0);
   };
   runner.RunOnce();
-  ASSERT_EQ(transport.sent.size(), 1u);
+  ASSERT_EQ(transport.sent.size(), 1U);
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 30ms);
   EXPECT_DOUBLE_EQ(model.GetPosition().x_meters, 0.0);
@@ -399,7 +433,7 @@ TEST_F(RunnerTest, ReadsNewInputBeforeExecutingQueuedSend) {
   EXPECT_EQ(controller.GetTime(), start + 20ms);
   EXPECT_TRUE(transport.sent.empty());
   runner.RunOnce();
-  EXPECT_EQ(transport.sent.size(), 1u);
+  EXPECT_EQ(transport.sent.size(), 1U);
 }
 
 TEST_F(RunnerTest, InputArrivingDuringCallbackIsReadOnNextIteration) {
@@ -410,7 +444,7 @@ TEST_F(RunnerTest, InputArrivingDuringCallbackIsReadOnNextIteration) {
   runner.RunOnce();
   runner.RunOnce();
   EXPECT_EQ(state_machine.GetState(), State::kGuarded);
-  EXPECT_EQ(transport.incoming.size(), 1u);
+  EXPECT_EQ(transport.incoming.size(), 1U);
   runner.RunOnce();
   EXPECT_EQ(state_machine.GetState(), State::kNotReady);
   EXPECT_EQ(controller.GetTime(), start + 20ms);
@@ -429,7 +463,7 @@ TEST_F(RunnerTest, DrainsAllInputButExecutesOnlyOneTaskPerCall) {
     EXPECT_EQ(controller.GetTime(), start + 20ms);
   }
   runner.RunOnce();
-  EXPECT_EQ(transport.sent.size(), 1u);
+  EXPECT_EQ(transport.sent.size(), 1U);
 }
 
 TEST_F(RunnerTest, DroppedTelemetryReturnsBeforeExecutingQueuedCommand) {
@@ -448,12 +482,17 @@ TEST_F(RunnerTest, DroppedTelemetryReturnsBeforeExecutingQueuedCommand) {
 TEST_F(RunnerTest, ForwardsStartupAndCommandLogsWithoutDuplicates) {
   std::vector<Logger::Record> records;
   logger.Log(Logger::Level::kInfo, start, "startup");
-  SimulationRunner runner{controller, transport, manual_transport, NetworkEmulator{0ms},
-      NetworkEmulator{0ms}, logger,
+  SimulationRunner runner{
+      controller,
+      transport,
+      manual_transport,
+      NetworkEmulator{0ms},
+      NetworkEmulator{0ms},
+      logger,
       [&](const Logger::Record& record) { records.push_back(record); }};
   transport.Push(CommandMessage{start + 1ms, Command::kUnguard});
   runner.RunOnce();
-  ASSERT_GE(records.size(), 2u);
+  ASSERT_GE(records.size(), 2U);
   EXPECT_EQ(records.front().message, "startup");
   EXPECT_EQ(records.front().timestamp, start);
   EXPECT_EQ(records.back().timestamp, start + 1ms);
@@ -472,41 +511,53 @@ TEST_F(RunnerTest, ContinuesAfterLogSendFailureAndDoesNotRetry) {
   logger.Log(Logger::Level::kError, start, "first");
   logger.Log(Logger::Level::kInfo, start, "second");
   std::vector<std::string> attempts;
-  SimulationRunner runner{controller, transport, manual_transport, NetworkEmulator{0ms},
-      NetworkEmulator{0ms}, logger, [&](const Logger::Record& record) {
-        attempts.push_back(record.message);
-        if (attempts.size() == 1) {
-          throw std::system_error(std::make_error_code(std::errc::operation_would_block));
-        }
-      }};
+  SimulationRunner runner{controller,
+                          transport,
+                          manual_transport,
+                          NetworkEmulator{0ms},
+                          NetworkEmulator{0ms},
+                          logger,
+                          [&](const Logger::Record& record) {
+                            attempts.push_back(record.message);
+                            if (attempts.size() == 1) {
+                              throw std::system_error(std::make_error_code(
+                                  std::errc::operation_would_block));
+                            }
+                          }};
   testing::internal::CaptureStderr();
   runner.RunOnce();
   const auto diagnostic = testing::internal::GetCapturedStderr();
   EXPECT_NE(diagnostic.find("syslog:"), std::string::npos);
   EXPECT_EQ(attempts, (std::vector<std::string>{"first", "second"}));
   runner.RunOnce();
-  EXPECT_EQ(attempts.size(), 2u);
-  EXPECT_EQ(transport.sent.size(), 1u);
+  EXPECT_EQ(attempts.size(), 2U);
+  EXPECT_EQ(transport.sent.size(), 1U);
 }
 
 TEST_F(RunnerTest, FlushesLogsOnNormalExitEvenWithoutIterations) {
   logger.Log(Logger::Level::kInfo, start, "shutdown");
   std::vector<Logger::Record> records;
-  SimulationRunner runner{controller, transport, manual_transport, NetworkEmulator{0ms},
-      NetworkEmulator{0ms}, logger,
+  SimulationRunner runner{
+      controller,
+      transport,
+      manual_transport,
+      NetworkEmulator{0ms},
+      NetworkEmulator{0ms},
+      logger,
       [&](const Logger::Record& record) { records.push_back(record); }};
   runner.Run([] { return true; });
-  ASSERT_EQ(records.size(), 1u);
+  ASSERT_EQ(records.size(), 1U);
   EXPECT_EQ(records.front().message, "shutdown");
   runner.Run([] { return true; });
-  EXPECT_EQ(records.size(), 1u);
+  EXPECT_EQ(records.size(), 1U);
 }
 
 TEST_F(RunnerTest, DisabledSinkDrainsRecordsAndPreservesText) {
   logger.Log(Logger::Level::kInfo, start, "local only");
   const auto text = logger.GetText();
-  SimulationRunner runner{controller, transport, manual_transport, NetworkEmulator{0ms},
-      NetworkEmulator{0ms}, logger};
+  SimulationRunner runner{controller,           transport,
+                          manual_transport,     NetworkEmulator{0ms},
+                          NetworkEmulator{0ms}, logger};
   runner.RunOnce();
   EXPECT_TRUE(logger.TakeRecords().empty());
   EXPECT_EQ(logger.GetText(), text);

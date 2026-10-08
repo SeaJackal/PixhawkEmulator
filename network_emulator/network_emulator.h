@@ -1,9 +1,11 @@
 #pragma once
 
-#include "network_message.h"
-
 #include <optional>
 #include <vector>
+
+#include "message_type.h"
+#include "network_message.h"
+#include "simulation_time.h"
 
 struct NetworkMessageInfo {
   NetworkMessage message;
@@ -16,9 +18,9 @@ class NetworkEmulator {
   using Duration = simulation::Duration;
 
   explicit NetworkEmulator(Duration latency);
-  ~NetworkEmulator() = default;
 
-  std::optional<NetworkMessageInfo> Process(NetworkMessage message) const;
+  [[nodiscard]] std::optional<NetworkMessageInfo> Process(
+      NetworkMessage message) const;
   void AddDelayFilter(TimePoint start, TimePoint end, MessageType type,
                       Duration delay);
   void AddDropFilter(TimePoint start, TimePoint end, MessageType type);

@@ -1,14 +1,32 @@
 #include "telemetry_serialization.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
+#include <ratio>
 #include <stdexcept>
+#include <vector>
+
+#include "control_messages.h"
+#include "controller_state_machine.h"
+#include "dynamic_model.h"
+#include "simulation_time.h"
+#include "telemetry.h"
 
 namespace {
 
 constexpr std::size_t kDoubleBytes = 8;
+constexpr int kBitsPerByte = 8;
+constexpr int kUint64Bits = std::numeric_limits<std::uint64_t>::digits;
+constexpr int kTimestampValueBits = 63;
+constexpr std::uint64_t kByteMask = 0xff;
+constexpr unsigned char kHoldingState = 5;
+constexpr std::size_t kSixthDoubleOffset = 5 * kDoubleBytes;
+constexpr std::byte kBatteryPresenceFlag{0x08};
 constexpr std::size_t kTimestampBytes = 8;
 constexpr std::size_t kMessageTypeBytes = 1;
 constexpr std::size_t kPresenceMaskBytes = 1;
@@ -19,15 +37,19 @@ constexpr std::size_t kBatteryFieldsBytes = 3 * kDoubleBytes;
 constexpr std::size_t kHeartbeatBytes = kHeartbeatFieldsBytes + kTimestampBytes;
 constexpr std::size_t kCommandBytes = kCommandFieldsBytes + kTimestampBytes;
 constexpr std::size_t kAttitudeBytes = kSixDoubleFieldsBytes + kTimestampBytes;
-constexpr std::size_t kGlobalPositionBytes = kSixDoubleFieldsBytes + 1 + kTimestampBytes;
+constexpr std::size_t kGlobalPositionBytes =
+    kSixDoubleFieldsBytes + 1 + kTimestampBytes;
 constexpr std::size_t kControlBytes = kSixDoubleFieldsBytes + kTimestampBytes;
-constexpr std::size_t kBatteryStatusBytes = kBatteryFieldsBytes + kTimestampBytes;
+constexpr std::size_t kBatteryStatusBytes =
+    kBatteryFieldsBytes + kTimestampBytes;
 constexpr std::size_t kTelemetryBytes = kPresenceMaskBytes + kHeartbeatBytes +
-    kAttitudeBytes + kGlobalPositionBytes + kBatteryStatusBytes;
+                                        kAttitudeBytes + kGlobalPositionBytes +
+                                        kBatteryStatusBytes;
 
 static_assert(std::ratio_equal_v<simulation::Duration::period, std::nano>);
 static_assert(std::numeric_limits<simulation::Duration::rep>::is_signed);
-static_assert(std::numeric_limits<simulation::Duration::rep>::digits == 63);
+static_assert(std::numeric_limits<simulation::Duration::rep>::digits ==
+              kTimestampValueBits);
 
 void CheckSize(const std::vector<std::byte>& bytes, std::size_t expected) {
   if (bytes.size() != expected) {
@@ -35,9 +57,10 @@ void CheckSize(const std::vector<std::byte>& bytes, std::size_t expected) {
   }
 }
 
-std::uint64_t ReadUint64(const std::vector<std::byte>& bytes, std::size_t offset) {
+std::uint64_t ReadUint64(const std::vector<std::byte>& bytes,
+                         std::size_t offset) {
   std::uint64_t bits = 0;
-  for (int shift = 0; shift < 64; shift += 8) {
+  for (int shift = 0; shift < kUint64Bits; shift += kBitsPerByte) {
     bits |= std::to_integer<std::uint64_t>(bytes[offset++]) << shift;
   }
   return bits;
@@ -45,25 +68,32 @@ std::uint64_t ReadUint64(const std::vector<std::byte>& bytes, std::size_t offset
 
 double ReadDouble(const std::vector<std::byte>& bytes, std::size_t offset) {
   const auto bits = ReadUint64(bytes, offset);
-  double value;
+  double value = 0.0;
   std::memcpy(&value, &bits, sizeof(value));
   return value;
 }
 
 simulation::TimePoint ReadTimestamp(const std::vector<std::byte>& bytes) {
   const auto bits = ReadUint64(bytes, bytes.size() - kTimestampBytes);
-  const auto count = bits <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
-      ? static_cast<std::int64_t>(bits)
-      : -1 - static_cast<std::int64_t>(std::numeric_limits<std::uint64_t>::max() - bits);
-  const auto min_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-      simulation::Duration::min()).count();
-  const auto max_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-      simulation::Duration::max()).count();
+  const auto count =
+      bits <= static_cast<std::uint64_t>(
+                  std::numeric_limits<std::int64_t>::max())
+          ? static_cast<std::int64_t>(bits)
+          : -1 - static_cast<std::int64_t>(
+                     std::numeric_limits<std::uint64_t>::max() - bits);
+  const auto min_milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          simulation::Duration::min())
+          .count();
+  const auto max_milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          simulation::Duration::max())
+          .count();
   if (count < min_milliseconds || count > max_milliseconds) {
     throw std::invalid_argument("Timestamp exceeds simulation clock range");
   }
-  return simulation::TimePoint{
-      std::chrono::duration_cast<simulation::Duration>(std::chrono::milliseconds{count})};
+  return simulation::TimePoint{std::chrono::duration_cast<simulation::Duration>(
+      std::chrono::milliseconds{count})};
 }
 
 ControllerStateMachine::State DeserializeState(std::byte value) {
@@ -79,47 +109,39 @@ ControllerStateMachine::State DeserializeState(std::byte value) {
       return State::kManual;
     case 4:
       return State::kAutomatic;
-    case 5:
+    case kHoldingState:
       return State::kHolding;
+    default:
+      throw std::invalid_argument("Unknown heartbeat state");
   }
-  throw std::invalid_argument("Unknown heartbeat state");
-}
-
-template <typename Message>
-Message ReadMessage(const std::vector<std::byte>& bytes, std::size_t& offset,
-                    std::size_t size) {
-  if (size > bytes.size() - offset) {
-    throw std::invalid_argument("Truncated telemetry payload");
-  }
-  const auto message = Deserialize<Message>(
-      std::vector<std::byte>(bytes.begin() + offset, bytes.begin() + offset + size));
-  offset += size;
-  return message;
 }
 
 void AppendUint64(std::vector<std::byte>& bytes, std::uint64_t bits) {
-  for (int shift = 0; shift < 64; shift += 8) {
-    bytes.push_back(static_cast<std::byte>((bits >> shift) & 0xff));
+  for (int shift = 0; shift < kUint64Bits; shift += kBitsPerByte) {
+    bytes.push_back(static_cast<std::byte>((bits >> shift) & kByteMask));
   }
 }
 
-void AppendTimestamp(std::vector<std::byte>& bytes, simulation::TimePoint timestamp) {
-  const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-      timestamp.time_since_epoch()).count();
+void AppendTimestamp(std::vector<std::byte>& bytes,
+                     simulation::TimePoint timestamp) {
+  const auto milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          timestamp.time_since_epoch())
+          .count();
   AppendUint64(bytes, static_cast<std::uint64_t>(milliseconds));
 }
 
 void AppendDouble(std::vector<std::byte>& bytes, double value) {
   static_assert(sizeof(double) == sizeof(std::uint64_t));
   static_assert(std::numeric_limits<double>::is_iec559);
-  std::uint64_t bits;
+  std::uint64_t bits = 0;
   std::memcpy(&bits, &value, sizeof(bits));
   AppendUint64(bytes, bits);
 }
 
 std::vector<std::byte> SerializeControl(simulation::TimePoint timestamp,
-                                      const Position& position,
-                                      const Orientation& orientation) {
+                                        const Position& position,
+                                        const Orientation& orientation) {
   std::vector<std::byte> bytes;
   bytes.reserve(kControlBytes + kMessageTypeBytes);
   AppendDouble(bytes, position.x_meters);
@@ -146,7 +168,7 @@ std::byte SerializeState(ControllerStateMachine::State state) {
     case State::kAutomatic:
       return std::byte{4};
     case State::kHolding:
-      return std::byte{5};
+      return std::byte{kHoldingState};
   }
   throw std::invalid_argument("Unknown heartbeat state");
 }
@@ -185,7 +207,8 @@ std::vector<std::byte> Serialize(const CommandMessage& message) {
 }
 
 std::vector<std::byte> Serialize(const ControlMessage& message) {
-  return SerializeControl(message.timestamp, message.position, message.orientation);
+  return SerializeControl(message.timestamp, message.position,
+                          message.orientation);
 }
 
 std::vector<std::byte> Serialize(const AttitudeMessage& message) {
@@ -231,15 +254,17 @@ std::vector<std::byte> Serialize(const Telemetry& telemetry) {
   AppendOptional(bytes, telemetry.heartbeat, std::byte{0x01});
   AppendOptional(bytes, telemetry.attitude, std::byte{0x02});
   AppendOptional(bytes, telemetry.global_position, std::byte{0x04});
-  AppendOptional(bytes, telemetry.battery_status, std::byte{0x08});
+  AppendOptional(bytes, telemetry.battery_status, kBatteryPresenceFlag);
   return bytes;
 }
 
 template <>
-CommandMessage Deserialize<CommandMessage>(const std::vector<std::byte>& bytes) {
+CommandMessage Deserialize<CommandMessage>(
+    const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kCommandBytes);
   using Command = ControllerStateMachine::CommandType;
-  const auto command = static_cast<Command>(std::to_integer<std::uint8_t>(bytes.front()));
+  const auto command =
+      static_cast<Command>(std::to_integer<std::uint8_t>(bytes.front()));
   if (command > Command::kLand) {
     throw std::invalid_argument("Unknown command");
   }
@@ -250,11 +275,12 @@ template <>
 ControlMessage Deserialize<ControlMessage>(
     const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kControlBytes);
-  const ControlMessage message{ReadTimestamp(bytes),
-          {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
-           ReadDouble(bytes, 2 * kDoubleBytes)},
-          {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
-           ReadDouble(bytes, 5 * kDoubleBytes)}};
+  const ControlMessage message{
+      ReadTimestamp(bytes),
+      {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
+       ReadDouble(bytes, 2 * kDoubleBytes)},
+      {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
+       ReadDouble(bytes, kSixthDoubleOffset)}};
   if (!std::isfinite(message.position.x_meters) ||
       !std::isfinite(message.position.y_meters) ||
       !std::isfinite(message.position.z_meters) ||
@@ -267,22 +293,26 @@ ControlMessage Deserialize<ControlMessage>(
 }
 
 template <>
-HeartbeatMessage Deserialize<HeartbeatMessage>(const std::vector<std::byte>& bytes) {
+HeartbeatMessage Deserialize<HeartbeatMessage>(
+    const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kHeartbeatBytes);
   if (bytes[1] != std::byte{0} && bytes[1] != std::byte{1}) {
     throw std::invalid_argument("Invalid heartbeat readiness flag");
   }
-  return {ReadTimestamp(bytes), DeserializeState(bytes[0]), bytes[1] == std::byte{1}};
+  return {ReadTimestamp(bytes), DeserializeState(bytes[0]),
+          bytes[1] == std::byte{1}};
 }
 
 template <>
-AttitudeMessage Deserialize<AttitudeMessage>(const std::vector<std::byte>& bytes) {
+AttitudeMessage Deserialize<AttitudeMessage>(
+    const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kAttitudeBytes);
-  return {ReadTimestamp(bytes),
-          {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
-           ReadDouble(bytes, 2 * kDoubleBytes)},
-          {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
-           ReadDouble(bytes, 5 * kDoubleBytes)}};
+  return {
+      ReadTimestamp(bytes),
+      {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
+       ReadDouble(bytes, 2 * kDoubleBytes)},
+      {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
+       ReadDouble(bytes, kSixthDoubleOffset)}};
 }
 
 template <>
@@ -293,12 +323,13 @@ GlobalPositionMessage Deserialize<GlobalPositionMessage>(
       bytes[kSixDoubleFieldsBytes] != std::byte{1}) {
     throw std::invalid_argument("Invalid GNSS validity flag");
   }
-  return {ReadTimestamp(bytes),
-          {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
-           ReadDouble(bytes, 2 * kDoubleBytes)},
-          {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
-           ReadDouble(bytes, 5 * kDoubleBytes)},
-          bytes[kSixDoubleFieldsBytes] == std::byte{1}};
+  return {
+      ReadTimestamp(bytes),
+      {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
+       ReadDouble(bytes, 2 * kDoubleBytes)},
+      {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
+       ReadDouble(bytes, kSixthDoubleOffset)},
+      bytes[kSixDoubleFieldsBytes] == std::byte{1}};
 }
 
 template <>

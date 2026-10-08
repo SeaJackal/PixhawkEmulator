@@ -3,11 +3,19 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
+
+#include "controller_state_machine.h"
+#include "message_type.h"
+#include "network_message.h"
+#include "simulation_time.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -23,7 +31,7 @@ NetworkMessage MessageAt(TimePoint time,
   return message;
 }
 
-void ExpectInvalid(std::string_view json, std::string_view field) {
+void ExpectInvalid(std::string_view json, const std::string& field) {
   try {
     ParseSimulationConfig(json);
     FAIL() << "Accepted invalid configuration: " << json;
@@ -60,44 +68,49 @@ TEST(SimulationConfigTest, ParsesGnssLossSchedules) {
     {"start_ms":5000,"duration_ms":2000},
     {"start_ms":0,"duration_ms":0}
   ]}})");
-  ASSERT_EQ(config.controller.gnss_losses.size(), 3u);
+  ASSERT_EQ(config.controller.gnss_losses.size(), 3U);
   EXPECT_EQ(config.controller.gnss_losses[0].start, 12s);
   EXPECT_EQ(config.controller.gnss_losses[0].duration, 1s);
   EXPECT_EQ(config.controller.gnss_losses[1].start, 5s);
   EXPECT_EQ(config.controller.gnss_losses[1].duration, 2s);
   EXPECT_EQ(config.controller.gnss_losses[2].start, 0ms);
   EXPECT_EQ(config.controller.gnss_losses[2].duration, 0ms);
-  EXPECT_TRUE(ParseSimulationConfig(R"({"controller":{}})").controller.gnss_losses.empty());
+  EXPECT_TRUE(ParseSimulationConfig(R"({"controller":{}})")
+                  .controller.gnss_losses.empty());
   EXPECT_TRUE(ParseSimulationConfig(R"({"controller":{"gnss_losses":[]}})")
                   .controller.gnss_losses.empty());
 }
 
 TEST(SimulationConfigTest, RejectsMalformedGnssLossSchedules) {
-  for (const auto json : {
-           R"({"controller":null})",
-           R"({"controller":{"unknown":[]}})",
-           R"({"controller":{"gnss_losses":{}}})",
-           R"({"controller":{"gnss_losses":[null]}})",
-           R"({"controller":{"gnss_losses":[{"duration_ms":1}]}})",
-           R"({"controller":{"gnss_losses":[{"start_ms":0}]}})",
-           R"({"controller":{"gnss_losses":[{"start_ms":0,"duration_ms":1,"end_ms":1}]}})"}) {
+  for (
+      const auto* const json :
+      {R"({"controller":null})", R"({"controller":{"unknown":[]}})",
+       R"({"controller":{"gnss_losses":{}}})",
+       R"({"controller":{"gnss_losses":[null]}})",
+       R"({"controller":{"gnss_losses":[{"duration_ms":1}]}})",
+       R"({"controller":{"gnss_losses":[{"start_ms":0}]}})",
+       R"({"controller":{"gnss_losses":[{"start_ms":0,"duration_ms":1,"end_ms":1}]}})"}) {
     ExpectInvalid(json, "controller");
   }
-  for (const auto field : {"start_ms", "duration_ms"}) {
-    const auto other = std::string_view{field} == "start_ms" ? "duration_ms" : "start_ms";
-    for (const auto value : {"-1", "1.5", "true", "null", "\"1\"", "[]", "{}",
-                              "18446744073709551615"}) {
-      const auto json = std::string{"{\"controller\":{\"gnss_losses\":[{\""} +
+  for (const auto* const field : {"start_ms", "duration_ms"}) {
+    const auto* const other =
+        std::string_view{field} == "start_ms" ? "duration_ms" : "start_ms";
+    for (const auto* const value : {"-1", "1.5", "true", "null", "\"1\"", "[]",
+                                    "{}", "18446744073709551615"}) {
+      const auto json = std::string{R"({"controller":{"gnss_losses":[{")"} +
                         field + "\":" + value + ",\"" + other + "\":0}]}}";
       ExpectInvalid(json, std::string{"controller.gnss_losses[0]."} + field);
     }
   }
-  const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           Duration::max()).count();
-  const auto prefix = std::string{"{\"controller\":{\"gnss_losses\":[{\"start_ms\":"} +
-                      std::to_string(maximum);
+  const auto maximum =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Duration::max())
+          .count();
+  const auto prefix =
+      std::string{R"({"controller":{"gnss_losses":[{"start_ms":)"} +
+      std::to_string(maximum);
   EXPECT_NO_THROW(ParseSimulationConfig(prefix + ",\"duration_ms\":0}]}}"));
-  ExpectInvalid(prefix + ",\"duration_ms\":1}]}}", "controller.gnss_losses[0].duration_ms");
+  ExpectInvalid(prefix + ",\"duration_ms\":1}]}}",
+                "controller.gnss_losses[0].duration_ms");
 }
 
 TEST(SimulationConfigTest, ConfiguresOptionalSyslogCollector) {
@@ -117,7 +130,8 @@ TEST(SimulationConfigTest, ConfiguresOptionalSyslogCollector) {
   ExpectInvalid(R"({"syslog":null})", "syslog");
   ExpectInvalid(R"({"syslog":{"enabled":true}})", "syslog.enabled");
   ExpectInvalid(R"({"syslog":{"address":"localhost"}})", "syslog.address");
-  ExpectInvalid(R"({"syslog":{"address":"127.0.0.1\u0000"}})", "syslog.address");
+  ExpectInvalid(R"({"syslog":{"address":"127.0.0.1\u0000"}})",
+                "syslog.address");
   ExpectInvalid(R"({"syslog":{"port":0}})", "syslog.port");
   ExpectInvalid(R"({"syslog":{"port":65536}})", "syslog.port");
   ExpectInvalid(R"({"syslog":{"port":-1}})", "syslog.port");
@@ -173,23 +187,22 @@ TEST(SimulationConfigTest, ParsesAllSimulationParameters) {
 
 TEST(SimulationConfigTest, LoadsCompleteExampleAndAppliesIndependentTroubles) {
   const auto config = LoadSimulationConfig(SIMULATION_CONFIG_EXAMPLE);
-  ASSERT_EQ(config.controller.gnss_losses.size(), 2u);
+  ASSERT_EQ(config.controller.gnss_losses.size(), 2U);
   EXPECT_EQ(config.controller.gnss_losses[0].start, 5s);
   EXPECT_EQ(config.controller.gnss_losses[0].duration, 2s);
   EXPECT_EQ(config.controller.gnss_losses[1].start, 12s);
   EXPECT_EQ(config.controller.gnss_losses[1].duration, 1s);
-  ASSERT_EQ(config.network.inbound.filters.size(), 1u);
-  ASSERT_EQ(config.network.outbound.filters.size(), 1u);
+  ASSERT_EQ(config.network.inbound.filters.size(), 1U);
+  ASSERT_EQ(config.network.outbound.filters.size(), 1U);
   const TimePoint start{42s};
   const auto inbound = CreateNetworkEmulator(config.network.inbound, start);
   const auto outbound = CreateNetworkEmulator(config.network.outbound, start);
   for (const auto offset : {9999ms, 10000ms, 14999ms, 15000ms}) {
-    const auto message =
-        MessageAt(start + offset, MessageType::kControl);
+    const auto message = MessageAt(start + offset, MessageType::kControl);
     const auto received = inbound.Process(message);
-    if (offset >= 10000ms && offset < 15000ms)
+    if (offset >= 10000ms && offset < 15000ms) {
       EXPECT_FALSE(received);
-    else {
+    } else {
       ASSERT_TRUE(received);
       EXPECT_EQ(received->arrival_time, message.timestamp + 20ms);
     }
@@ -223,7 +236,7 @@ TEST(SimulationConfigTest, SupportsEveryMessageType) {
         std::string{
             R"({"network":{"inbound":{"filters":[{"kind":"drop","message_type":")"} +
         name + R"(","start_ms":0,"end_ms":1000}]}}})");
-    ASSERT_EQ(config.network.inbound.filters.size(), 1u);
+    ASSERT_EQ(config.network.inbound.filters.size(), 1U);
     EXPECT_EQ(config.network.inbound.filters[0].message_type, type);
     const auto emulator =
         CreateNetworkEmulator(config.network.inbound, TimePoint{10s});
@@ -293,9 +306,12 @@ TEST(SimulationConfigTest, RejectsInvalidJsonStructureAndValues) {
       std::pair{R"({"transport":{"local":{"port":1.0}}})", "local.port"},
       std::pair{R"({"transport":{"manual_local":{"address":"::1"}}})",
                 "manual_local.address"},
-      std::pair{R"({"transport":{"manual_local":{"port":65536}}})", "manual_local.port"},
-      std::pair{R"({"transport":{"manual_local":{"port":-1}}})", "manual_local.port"},
-      std::pair{R"({"transport":{"manual_local":{"port":1.0}}})", "manual_local.port"},
+      std::pair{R"({"transport":{"manual_local":{"port":65536}}})",
+                "manual_local.port"},
+      std::pair{R"({"transport":{"manual_local":{"port":-1}}})",
+                "manual_local.port"},
+      std::pair{R"({"transport":{"manual_local":{"port":1.0}}})",
+                "manual_local.port"},
       std::pair{R"({"network":{"inbound":{"latency_ms":-1}}})",
                 "inbound.latency_ms"},
       std::pair{R"({"network":{"inbound":{"latency_ms":null}}})",
@@ -317,8 +333,10 @@ TEST(SimulationConfigTest, RejectsInvalidFilterFieldsWithIndexedPaths) {
       std::pair{R"({"kind":"other"})", "kind"},
       std::pair{R"({"kind":"drop"})", "message_type"},
       std::pair{R"({"kind":"drop","message_type":"unknown"})", "message_type"},
-      std::pair{R"({"kind":"drop","message_type":"automatic_control"})", "message_type"},
-      std::pair{R"({"kind":"drop","message_type":"manual_control"})", "message_type"},
+      std::pair{R"({"kind":"drop","message_type":"automatic_control"})",
+                "message_type"},
+      std::pair{R"({"kind":"drop","message_type":"manual_control"})",
+                "message_type"},
       std::pair{R"({"kind":"drop","message_type":"heartbeat"})", "start_ms"},
       std::pair{R"({"kind":"drop","message_type":"heartbeat","start_ms":0})",
                 "end_ms"},
@@ -349,7 +367,7 @@ TEST(SimulationConfigTest, ChecksDurationConversionBoundaries) {
   const auto maximum =
       std::chrono::duration_cast<std::chrono::milliseconds>(Duration::max());
   const auto json = [](std::uint64_t milliseconds) {
-    return "{\"state_machine\":{\"readiness_timeout_ms\":" +
+    return R"({"state_machine":{"readiness_timeout_ms":)" +
            std::to_string(milliseconds) + "}}";
   };
   EXPECT_EQ(ParseSimulationConfig(json(maximum.count()))

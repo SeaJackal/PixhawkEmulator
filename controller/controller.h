@@ -7,6 +7,8 @@
 
 #include "battery_model.h"
 #include "controller_state_machine.h"
+#include "dynamic_model.h"
+#include "simulation_time.h"
 #include "telemetry.h"
 
 template <typename Model = DynamicModel, typename Battery = BatteryModel,
@@ -82,12 +84,15 @@ Controller<Model, Battery, StateMachine>::Controller(
       next_battery_status_(start_time + kBatteryStatusPeriod) {}
 
 template <typename Model, typename Battery, typename StateMachine>
-void Controller<Model, Battery, StateMachine>::AddGnssLoss(
-    TimePoint start, Duration duration) {
+void Controller<Model, Battery, StateMachine>::AddGnssLoss(TimePoint start,
+                                                           Duration duration) {
   if (duration < Duration::zero() || start > TimePoint::max() - duration) {
-    throw std::invalid_argument("Invalid GNSS loss duration or timestamp overflow");
+    throw std::invalid_argument(
+        "Invalid GNSS loss duration or timestamp overflow");
   }
-  if (duration == Duration::zero()) return;
+  if (duration == Duration::zero()) {
+    return;
+  }
   gnss_losses_.push_back({start, start + duration});
 }
 

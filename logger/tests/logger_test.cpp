@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+
 TEST(LoggerTest, PreservesLevelTimestampMessageAndOrder) {
   const Logger::TimePoint start{std::chrono::seconds(12345)};
   Logger logger{start};
@@ -39,7 +41,7 @@ TEST(LoggerTest, TakingRecordsPreservesHistoryAndConsumesInOrder) {
   logger.Log(Logger::Level::kError, start + std::chrono::seconds{1}, "second");
   const auto text = logger.GetText();
   const auto records = logger.TakeRecords();
-  ASSERT_EQ(records.size(), 2u);
+  ASSERT_EQ(records.size(), 2U);
   EXPECT_EQ(records[0].level, Logger::Level::kInfo);
   EXPECT_EQ(records[0].timestamp, start);
   EXPECT_EQ(records[0].message, "first");
@@ -53,5 +55,5 @@ TEST(LoggerTest, TakingRecordsPreservesHistoryAndConsumesInOrder) {
   EXPECT_TRUE(logger.TakeRecords().empty());
   EXPECT_TRUE(logger.GetText().empty());
   logger.Log(Logger::Level::kDebug, start, "reused");
-  ASSERT_EQ(logger.TakeRecords().size(), 1u);
+  ASSERT_EQ(logger.TakeRecords().size(), 1U);
 }

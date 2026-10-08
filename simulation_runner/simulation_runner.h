@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -11,9 +13,14 @@
 #include <utility>
 #include <vector>
 
+#include "control_messages.h"
 #include "logger.h"
+#include "message_type.h"
 #include "network_emulator.h"
 #include "network_message.h"
+#include "simulation_time.h"
+#include "telemetry.h"
+#include "telemetry_serialization.h"
 
 template <typename ControllerType, typename Transport>
 class SimulationRunner {
@@ -22,8 +29,8 @@ class SimulationRunner {
   using RecordSink = std::function<void(const Logger::Record&)>;
 
   SimulationRunner(ControllerType& controller, Transport& transport,
-                   Transport& manual_transport,
-                   NetworkEmulator inbound, NetworkEmulator outbound)
+                   Transport& manual_transport, NetworkEmulator inbound,
+                   NetworkEmulator outbound)
       : controller_(controller),
         transport_(transport),
         manual_transport_(manual_transport),
@@ -31,14 +38,22 @@ class SimulationRunner {
         outbound_(std::move(outbound)) {}
 
   SimulationRunner(ControllerType& controller, Transport& transport,
-                   Transport& manual_transport,
-                   NetworkEmulator inbound, NetworkEmulator outbound,
-                   Logger& logger, RecordSink record_sink = {})
-      : SimulationRunner(controller, transport, manual_transport, std::move(inbound),
-                         std::move(outbound)) {
-    logger_ = &logger;
-    record_sink_ = std::move(record_sink);
-  }
+                   Transport& manual_transport, NetworkEmulator inbound,
+                   NetworkEmulator outbound, Logger& logger,
+                   RecordSink record_sink = {})
+      : controller_(controller),
+        transport_(transport),
+        manual_transport_(manual_transport),
+        inbound_(std::move(inbound)),
+        outbound_(std::move(outbound)),
+        logger_(&logger),
+        record_sink_(std::move(record_sink)) {}
+
+  ~SimulationRunner() = default;
+  SimulationRunner(const SimulationRunner&) = delete;
+  SimulationRunner& operator=(const SimulationRunner&) = delete;
+  SimulationRunner(SimulationRunner&&) = delete;
+  SimulationRunner& operator=(SimulationRunner&&) = delete;
 
   void RunOnce() {
     DrainLogs();
@@ -82,17 +97,29 @@ class SimulationRunner {
 
   static std::vector<NetworkMessage> Encode(const Telemetry& telemetry) {
     std::vector<NetworkMessage> messages;
-    if (telemetry.heartbeat) messages.emplace_back(*telemetry.heartbeat);
-    if (telemetry.attitude) messages.emplace_back(*telemetry.attitude);
-    if (telemetry.global_position) messages.emplace_back(*telemetry.global_position);
-    if (telemetry.battery_status) messages.emplace_back(*telemetry.battery_status);
+    if (telemetry.heartbeat) {
+      messages.emplace_back(*telemetry.heartbeat);
+    }
+    if (telemetry.attitude) {
+      messages.emplace_back(*telemetry.attitude);
+    }
+    if (telemetry.global_position) {
+      messages.emplace_back(*telemetry.global_position);
+    }
+    if (telemetry.battery_status) {
+      messages.emplace_back(*telemetry.battery_status);
+    }
     return messages;
   }
 
   void DrainLogs() {
-    if (!logger_) return;
+    if (logger_ == nullptr) {
+      return;
+    }
     for (const auto& record : logger_->TakeRecords()) {
-      if (!record_sink_) continue;
+      if (!record_sink_) {
+        continue;
+      }
       try {
         record_sink_(record);
       } catch (const std::exception& error) {
@@ -105,15 +132,20 @@ class SimulationRunner {
     while (true) {
       const bool automatic = Receive(transport_, ControlSource::kAutomatic);
       const bool manual = Receive(manual_transport_, ControlSource::kManual);
-      if (!automatic && !manual) break;
+      if (!automatic && !manual) {
+        break;
+      }
     }
   }
 
   bool Receive(Transport& transport, ControlSource source) {
     auto bytes = transport.Receive();
-    if (!bytes) return false;
+    if (!bytes) {
+      return false;
+    }
     NetworkMessage message(std::move(*bytes));
-    const std::vector<std::byte> payload(message.data.begin(), message.data.end() - 1);
+    const std::vector<std::byte> payload(message.data.begin(),
+                                         message.data.end() - 1);
     std::function<void()> callback;
     switch (message.type) {
       case MessageType::kCommand: {
@@ -129,7 +161,8 @@ class SimulationRunner {
           if (source == ControlSource::kManual) {
             controller.SetManualControl(command.position, command.orientation);
           } else {
-            controller.SetAutomaticControl(command.position, command.orientation);
+            controller.SetAutomaticControl(command.position,
+                                           command.orientation);
           }
         };
         break;

@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
+
+#include "simulation_time.h"
 
 BatteryModel::BatteryModel(double max_capacity_amp_hours,
                            double start_capacity_amp_hours)
@@ -16,8 +19,7 @@ BatteryModel::BatteryModel(double max_capacity_amp_hours,
   assert(start_capacity_amp_hours <= max_capacity_amp_hours);
 }
 
-bool BatteryModel::Process(double current_amps,
-                           simulation::Duration elapsed) {
+bool BatteryModel::Process(double current_amps, simulation::Duration elapsed) {
   if (charge_amp_hours_ == 0.0) {
     throw std::runtime_error("Battery is empty");
   }
@@ -29,9 +31,10 @@ bool BatteryModel::Process(double current_amps,
   const double critical_charge_amp_hours =
       max_capacity_amp_hours_ * (kCriticalChargePercent / 100.0);
   const double consumed_amp_hours = current_amps * (seconds / 3600.0);
-  charge_amp_hours_ = std::clamp(charge_amp_hours_ - consumed_amp_hours,
-                               std::min(charge_amp_hours_, critical_charge_amp_hours),
-                               max_capacity_amp_hours_);
+  charge_amp_hours_ =
+      std::clamp(charge_amp_hours_ - consumed_amp_hours,
+                 std::min(charge_amp_hours_, critical_charge_amp_hours),
+                 max_capacity_amp_hours_);
   return GetStatus() != Status::kCritical;
 }
 
@@ -46,7 +49,8 @@ double BatteryModel::GetVoltageVolts() const {
 }
 
 BatteryModel::Status BatteryModel::GetStatus() const {
-  const double charge_percent = 100.0 * (charge_amp_hours_ / max_capacity_amp_hours_);
+  const double charge_percent =
+      100.0 * (charge_amp_hours_ / max_capacity_amp_hours_);
   if (charge_percent <= kCriticalChargePercent) {
     return Status::kCritical;
   }

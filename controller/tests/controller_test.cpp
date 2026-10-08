@@ -1,8 +1,19 @@
 #include "controller.h"
 
+#include <gtest/gtest-death-test.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <stdexcept>
+#include <utility>
 #include <vector>
+
+#include "battery_model.h"
+#include "controller_state_machine.h"
+#include "dynamic_model.h"
+#include "logger.h"
+#include "simulation_time.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -12,12 +23,12 @@ using Command = Controller<>::CommandType;
 
 class ControllerTelemetryTest : public ::testing::Test {
  protected:
-  const simulation::TimePoint start{42s};
+  static constexpr simulation::TimePoint kStart{42s};
   DynamicModel model;
   BatteryModel battery{2.0, 2.0};
-  Logger logger{start};
-  ControllerStateMachine state_machine{model, logger, start};
-  Controller<> controller{model, battery, state_machine, start};
+  Logger logger{kStart};
+  ControllerStateMachine state_machine{model, logger, kStart};
+  Controller<> controller{model, battery, state_machine, kStart};
 
   Telemetry Steps(int count) {
     Telemetry telemetry;
@@ -38,7 +49,7 @@ TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
   EXPECT_EQ(Controller<>::kProcessPeriod, 20ms);
   for (int tick = 1; tick <= 101; ++tick) {
     const auto telemetry = controller.Process(controller.GetTime() + 20ms);
-    const auto timestamp = start + tick * 20ms;
+    const auto timestamp = kStart + tick * 20ms;
     EXPECT_EQ(telemetry.timestamp, timestamp);
     EXPECT_TRUE(telemetry.has_telemetry);
     ASSERT_TRUE(telemetry.attitude);
@@ -64,30 +75,33 @@ TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
   }
 }
 
-TEST_F(ControllerTelemetryTest, GnssLossIntervalsUseSampleTimesAndPreserveCadence) {
-  controller.AddGnssLoss(start + 700ms, 100ms);
-  controller.AddGnssLoss(start + 200ms, 200ms);
-  controller.AddGnssLoss(start + 300ms, 200ms);
-  controller.AddGnssLoss(start + 500ms, 100ms);
-  controller.AddGnssLoss(start + 110ms, 30ms);
-  controller.AddGnssLoss(start + 100ms, 0ms);
+TEST_F(ControllerTelemetryTest,
+       GnssLossIntervalsUseSampleTimesAndPreserveCadence) {
+  controller.AddGnssLoss(kStart + 700ms, 100ms);
+  controller.AddGnssLoss(kStart + 200ms, 200ms);
+  controller.AddGnssLoss(kStart + 300ms, 200ms);
+  controller.AddGnssLoss(kStart + 500ms, 100ms);
+  controller.AddGnssLoss(kStart + 110ms, 30ms);
+  controller.AddGnssLoss(kStart + 100ms, 0ms);
   for (int tick = 1; tick <= 50; ++tick) {
     const auto telemetry = Steps(1);
     const auto elapsed = tick * 20ms;
-    EXPECT_EQ(telemetry.timestamp, start + elapsed);
+    EXPECT_EQ(telemetry.timestamp, kStart + elapsed);
     EXPECT_TRUE(telemetry.attitude);
     EXPECT_EQ(telemetry.global_position.has_value(), tick % 5 == 0);
     EXPECT_EQ(telemetry.battery_status.has_value(), tick % 25 == 0);
     EXPECT_EQ(telemetry.heartbeat.has_value(), tick % 50 == 0);
     EXPECT_EQ(state_machine.GetState(), State::kGuarded);
     if (telemetry.global_position) {
-      const bool lost = (200ms <= elapsed && elapsed < 600ms) || elapsed == 700ms;
+      const bool lost =
+          (200ms <= elapsed && elapsed < 600ms) || elapsed == 700ms;
       EXPECT_EQ(telemetry.global_position->gnss_valid, !lost);
     }
   }
 }
 
-TEST_F(ControllerTelemetryTest, GnssLossKeepsManualFlightAndModelTelemetryUpdating) {
+TEST_F(ControllerTelemetryTest,
+       GnssLossKeepsManualFlightAndModelTelemetryUpdating) {
   Manual();
   ASSERT_TRUE(controller.SetManualControl({10.0, 0.0, 0.0}, {}));
   const auto loss_start = controller.GetTime();
@@ -96,14 +110,17 @@ TEST_F(ControllerTelemetryTest, GnssLossKeepsManualFlightAndModelTelemetryUpdati
     const auto telemetry = Steps(5);
     ASSERT_TRUE(telemetry.global_position);
     EXPECT_EQ(telemetry.global_position->gnss_valid, sample >= 3);
-    EXPECT_NEAR(telemetry.global_position->position.x_meters, sample * 0.1, 1e-12);
-    EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second, 1.0);
+    EXPECT_NEAR(telemetry.global_position->position.x_meters, sample * 0.1,
+                1e-12);
+    EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second,
+                     1.0);
     EXPECT_EQ(state_machine.GetState(), State::kManual);
   }
 }
 
-TEST_F(ControllerTelemetryTest, GnssLossSupportsStartupAndAlreadyActiveIntervals) {
-  controller.AddGnssLoss(start - 100ms, 300ms);
+TEST_F(ControllerTelemetryTest,
+       GnssLossSupportsStartupAndAlreadyActiveIntervals) {
+  controller.AddGnssLoss(kStart - 100ms, 300ms);
   auto telemetry = Steps(5);
   ASSERT_TRUE(telemetry.global_position);
   EXPECT_FALSE(telemetry.global_position->gnss_valid);
@@ -115,10 +132,13 @@ TEST_F(ControllerTelemetryTest, GnssLossSupportsStartupAndAlreadyActiveIntervals
 TEST_F(ControllerTelemetryTest, GnssLossRejectsInvalidRanges) {
   using TimePoint = simulation::TimePoint;
   using Duration = simulation::Duration;
-  EXPECT_THROW(controller.AddGnssLoss(start, -1ns), std::invalid_argument);
-  EXPECT_THROW(controller.AddGnssLoss(start, Duration::min()), std::invalid_argument);
-  EXPECT_THROW(controller.AddGnssLoss(TimePoint::max(), 1ns), std::invalid_argument);
-  EXPECT_THROW(controller.AddGnssLoss(start, Duration::max()), std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(kStart, -1ns), std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(kStart, Duration::min()),
+               std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(TimePoint::max(), 1ns),
+               std::invalid_argument);
+  EXPECT_THROW(controller.AddGnssLoss(kStart, Duration::max()),
+               std::invalid_argument);
   EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::max(), 0ns));
   EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::max() - 1ns, 1ns));
   EXPECT_NO_THROW(controller.AddGnssLoss(TimePoint::min(), Duration::max()));
@@ -128,19 +148,19 @@ TEST_F(ControllerTelemetryTest, GnssLossRejectsInvalidRanges) {
 }
 
 TEST_F(ControllerTelemetryTest, PartialStepsPreserveAllTelemetryBoundaries) {
-  const auto partial = controller.Process(start + 7ms);
-  EXPECT_EQ(partial.timestamp, start + 7ms);
+  const auto partial = controller.Process(kStart + 7ms);
+  EXPECT_EQ(partial.timestamp, kStart + 7ms);
   EXPECT_FALSE(partial.has_telemetry);
   EXPECT_FALSE(partial.heartbeat);
   EXPECT_FALSE(partial.attitude);
   EXPECT_FALSE(partial.global_position);
   EXPECT_FALSE(partial.battery_status);
-  EXPECT_EQ(controller.GetTime(), start + 7ms);
-  EXPECT_EQ(controller.NextTelemetryTime(), start + 20ms);
+  EXPECT_EQ(controller.GetTime(), kStart + 7ms);
+  EXPECT_EQ(controller.NextTelemetryTime(), kStart + 20ms);
   for (int tick = 1; tick <= 50; ++tick) {
-    const auto telemetry = controller.Process(start + 1013ms);
+    const auto telemetry = controller.Process(kStart + 1013ms);
     EXPECT_TRUE(telemetry.has_telemetry);
-    EXPECT_EQ(telemetry.timestamp, start + tick * 20ms);
+    EXPECT_EQ(telemetry.timestamp, kStart + tick * 20ms);
     EXPECT_EQ(controller.GetTime(), telemetry.timestamp);
     ASSERT_TRUE(telemetry.attitude);
     EXPECT_EQ(telemetry.attitude->timestamp, telemetry.timestamp);
@@ -148,18 +168,18 @@ TEST_F(ControllerTelemetryTest, PartialStepsPreserveAllTelemetryBoundaries) {
     EXPECT_EQ(telemetry.battery_status.has_value(), tick % 25 == 0);
     EXPECT_EQ(telemetry.heartbeat.has_value(), tick == 50);
   }
-  const auto remainder = controller.Process(start + 1013ms);
-  EXPECT_EQ(remainder.timestamp, start + 1013ms);
+  const auto remainder = controller.Process(kStart + 1013ms);
+  EXPECT_EQ(remainder.timestamp, kStart + 1013ms);
   EXPECT_FALSE(remainder.has_telemetry);
-  EXPECT_EQ(controller.GetTime(), start + 1013ms);
-  EXPECT_FALSE(controller.Process(start + 1013ms).has_telemetry);
-  EXPECT_DEBUG_DEATH(controller.Process(start + 1012ms), "");
-  const auto telemetry = controller.Process(start + 1033ms);
+  EXPECT_EQ(controller.GetTime(), kStart + 1013ms);
+  EXPECT_FALSE(controller.Process(kStart + 1013ms).has_telemetry);
+  EXPECT_DEBUG_DEATH(controller.Process(kStart + 1012ms), "");
+  const auto telemetry = controller.Process(kStart + 1033ms);
   ASSERT_TRUE(telemetry.attitude);
-  EXPECT_EQ(telemetry.attitude->timestamp, start + 1020ms);
-  EXPECT_EQ(controller.GetTime(), start + 1020ms);
-  const auto repeated = controller.Process(start + 1020ms);
-  EXPECT_EQ(repeated.timestamp, start + 1020ms);
+  EXPECT_EQ(telemetry.attitude->timestamp, kStart + 1020ms);
+  EXPECT_EQ(controller.GetTime(), kStart + 1020ms);
+  const auto repeated = controller.Process(kStart + 1020ms);
+  EXPECT_EQ(repeated.timestamp, kStart + 1020ms);
   EXPECT_FALSE(repeated.has_telemetry);
   EXPECT_FALSE(repeated.attitude);
 }
@@ -220,7 +240,8 @@ TEST_F(ControllerTelemetryTest, IntegratesArrivalWithinStepBeforeSampling) {
   ASSERT_TRUE(telemetry.global_position);
   ASSERT_TRUE(telemetry.attitude);
   EXPECT_NEAR(telemetry.global_position->position.x_meters, 0.1, 1e-12);
-  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second, 1.0);
+  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second,
+                   1.0);
   EXPECT_NEAR(telemetry.attitude->orientation.pitch_radians, -0.1, 1e-12);
   EXPECT_DOUBLE_EQ(
       telemetry.attitude->angular_velocity.pitch_radians_per_second, -1.0);
@@ -228,16 +249,17 @@ TEST_F(ControllerTelemetryTest, IntegratesArrivalWithinStepBeforeSampling) {
   ASSERT_TRUE(telemetry.global_position);
   ASSERT_TRUE(telemetry.attitude);
   ASSERT_TRUE(telemetry.battery_status);
-  EXPECT_EQ(telemetry.attitude->timestamp, start + 1500ms);
+  EXPECT_EQ(telemetry.attitude->timestamp, kStart + 1500ms);
   EXPECT_DOUBLE_EQ(telemetry.global_position->position.x_meters, 0.125);
-  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second, 0.0);
+  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second,
+                   0.0);
   EXPECT_DOUBLE_EQ(telemetry.attitude->orientation.pitch_radians, -0.125);
   EXPECT_DOUBLE_EQ(
       telemetry.attitude->angular_velocity.pitch_radians_per_second, 0.0);
   const double charge = 2.0 - (1.0 + 10.0 * 0.125 + 0.375) / 3600.0;
   EXPECT_NEAR(telemetry.battery_status->charge_amp_hours, charge, 1e-11);
-  EXPECT_NEAR(telemetry.battery_status->voltage_volts,
-              9.0 + 3.6 * charge / 2.0, 1e-11);
+  EXPECT_NEAR(telemetry.battery_status->voltage_volts, 9.0 + 3.6 * charge / 2.0,
+              1e-11);
   EXPECT_DOUBLE_EQ(telemetry.battery_status->current_amps, 1.0);
 }
 
@@ -251,12 +273,13 @@ TEST_F(ControllerTelemetryTest, SamplesStateAndMotionAfterCoincidentTimeout) {
   ASSERT_TRUE(telemetry.global_position);
   ASSERT_TRUE(telemetry.attitude);
   ASSERT_TRUE(telemetry.battery_status);
-  EXPECT_EQ(telemetry.heartbeat->timestamp, start + 2s);
+  EXPECT_EQ(telemetry.heartbeat->timestamp, kStart + 2s);
   EXPECT_EQ(telemetry.heartbeat->state, State::kHolding);
   EXPECT_NEAR(telemetry.global_position->position.x_meters, 0.5, 1e-12);
-  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second, 0.0);
-  EXPECT_DOUBLE_EQ(
-      telemetry.attitude->angular_velocity.roll_radians_per_second, 0.0);
+  EXPECT_DOUBLE_EQ(telemetry.global_position->velocity.x_meters_per_second,
+                   0.0);
+  EXPECT_DOUBLE_EQ(telemetry.attitude->angular_velocity.roll_radians_per_second,
+                   0.0);
   EXPECT_DOUBLE_EQ(telemetry.battery_status->current_amps, 1.0);
   EXPECT_NEAR(telemetry.battery_status->charge_amp_hours,
               2.0 - (1.5 + 10.0 * 0.5) / 3600.0, 1e-11);
@@ -264,13 +287,13 @@ TEST_F(ControllerTelemetryTest, SamplesStateAndMotionAfterCoincidentTimeout) {
 
 TEST_F(ControllerTelemetryTest, HandlesZeroAndPartialStepReadinessTimeouts) {
   for (const auto timeout : {0ms, 7ms}) {
-    ControllerStateMachine custom{model, logger, start, timeout};
-    Controller local{model, battery, custom, start};
+    ControllerStateMachine custom{model, logger, kStart, timeout};
+    Controller local{model, battery, custom, kStart};
     local.Command(Command::kUnguard);
-    const auto telemetry = local.Process(start + 20ms);
+    const auto telemetry = local.Process(kStart + 20ms);
     EXPECT_EQ(custom.GetState(), State::kReady);
     ASSERT_TRUE(telemetry.attitude);
-    EXPECT_EQ(telemetry.attitude->timestamp, start + 20ms);
+    EXPECT_EQ(telemetry.attitude->timestamp, kStart + 20ms);
     EXPECT_FALSE(telemetry.heartbeat);
   }
 }
@@ -292,11 +315,15 @@ TEST_F(ControllerTelemetryTest, ContinuesAtCriticalWithoutControllerLogging) {
 class StubModel {
  public:
   double current = 7.0;
-  double GetCurrentAmps() const { return current; }
-  Orientation GetOrientation() const { return {1.0, 2.0, 3.0}; }
-  AngularVelocity GetAngularVelocity() const { return {4.0, 5.0, 6.0}; }
-  Position GetPosition() const { return {7.0, 8.0, 9.0}; }
-  LinearVelocity GetLinearVelocity() const { return {10.0, 11.0, 12.0}; }
+  [[nodiscard]] double GetCurrentAmps() const { return current; }
+  [[nodiscard]] Orientation GetOrientation() const { return {1.0, 2.0, 3.0}; }
+  [[nodiscard]] AngularVelocity GetAngularVelocity() const {
+    return {4.0, 5.0, 6.0};
+  }
+  [[nodiscard]] Position GetPosition() const { return {7.0, 8.0, 9.0}; }
+  [[nodiscard]] LinearVelocity GetLinearVelocity() const {
+    return {10.0, 11.0, 12.0};
+  }
 };
 
 class RecordingBattery {
@@ -306,8 +333,8 @@ class RecordingBattery {
     calls.emplace_back(current, elapsed);
     return true;
   }
-  double GetVoltageVolts() const { return 11.5; }
-  double GetChargeAmpHours() const { return 1.5; }
+  [[nodiscard]] double GetVoltageVolts() const { return 11.5; }
+  [[nodiscard]] double GetChargeAmpHours() const { return 1.5; }
 };
 
 class StubStateMachine {
@@ -317,6 +344,12 @@ class StubStateMachine {
 
   StubStateMachine(StubModel& model, TimePoint start)
       : model_(model), start_(start) {}
+
+  ~StubStateMachine() = default;
+  StubStateMachine(const StubStateMachine&) = delete;
+  StubStateMachine& operator=(const StubStateMachine&) = delete;
+  StubStateMachine(StubStateMachine&&) = delete;
+  StubStateMachine& operator=(StubStateMachine&&) = delete;
 
   std::vector<TimePoint> endpoints;
   CommandType command = CommandType::kLand;
@@ -337,7 +370,7 @@ class StubStateMachine {
     orientation = angles;
     return true;
   }
-  State GetState() const { return State::kHolding; }
+  [[nodiscard]] State GetState() const { return State::kHolding; }
   TimePoint Process(TimePoint until) {
     endpoints.push_back(until);
     if (endpoints.size() == 1) {
@@ -353,12 +386,12 @@ class StubStateMachine {
 };
 
 TEST(ControllerInjectionTest, UsesTemplateDependenciesAndIntegratesEachEvent) {
-  const simulation::TimePoint start{123s};
+  constexpr simulation::TimePoint kStart{123s};
   StubModel model;
   RecordingBattery battery;
-  StubStateMachine state_machine{model, start};
+  StubStateMachine state_machine{model, kStart};
   Controller<StubModel, RecordingBattery, StubStateMachine> controller{
-      model, battery, state_machine, start};
+      model, battery, state_machine, kStart};
   EXPECT_TRUE(state_machine.endpoints.empty());
   EXPECT_TRUE(battery.calls.empty());
   EXPECT_FALSE(controller.Command(Command::kToManual));
@@ -368,25 +401,26 @@ TEST(ControllerInjectionTest, UsesTemplateDependenciesAndIntegratesEachEvent) {
   EXPECT_DOUBLE_EQ(state_machine.orientation.pitch_radians, 5.0);
   EXPECT_TRUE(controller.SetAutomaticControl({7.0, 8.0, 9.0}, {}));
   EXPECT_DOUBLE_EQ(state_machine.target.z_meters, 9.0);
-  const auto telemetry = controller.Process(start + 20ms);
-  ASSERT_EQ(state_machine.endpoints.size(), 2u);
-  EXPECT_EQ(state_machine.endpoints[0], start + 20ms);
-  EXPECT_EQ(state_machine.endpoints[1], start + 20ms);
-  ASSERT_EQ(battery.calls.size(), 2u);
+  const auto telemetry = controller.Process(kStart + 20ms);
+  ASSERT_EQ(state_machine.endpoints.size(), 2U);
+  EXPECT_EQ(state_machine.endpoints[0], kStart + 20ms);
+  EXPECT_EQ(state_machine.endpoints[1], kStart + 20ms);
+  ASSERT_EQ(battery.calls.size(), 2U);
   EXPECT_DOUBLE_EQ(battery.calls[0].first, 7.0);
   EXPECT_EQ(battery.calls[0].second, 7ms);
   EXPECT_DOUBLE_EQ(battery.calls[1].first, 2.0);
   EXPECT_EQ(battery.calls[1].second, 13ms);
   ASSERT_TRUE(telemetry.attitude);
-  EXPECT_EQ(telemetry.attitude->timestamp, start + 20ms);
+  EXPECT_EQ(telemetry.attitude->timestamp, kStart + 20ms);
   EXPECT_DOUBLE_EQ(telemetry.attitude->orientation.yaw_radians, 3.0);
-  EXPECT_DOUBLE_EQ(telemetry.attitude->angular_velocity.yaw_radians_per_second, 6.0);
+  EXPECT_DOUBLE_EQ(telemetry.attitude->angular_velocity.yaw_radians_per_second,
+                   6.0);
   Telemetry heartbeat_telemetry;
   for (int tick = 1; tick < 50; ++tick) {
     heartbeat_telemetry = controller.Process(controller.GetTime() + 20ms);
   }
   ASSERT_TRUE(heartbeat_telemetry.heartbeat);
-  EXPECT_EQ(heartbeat_telemetry.heartbeat->timestamp, start + 1s);
+  EXPECT_EQ(heartbeat_telemetry.heartbeat->timestamp, kStart + 1s);
   EXPECT_EQ(heartbeat_telemetry.heartbeat->state, State::kHolding);
   EXPECT_TRUE(heartbeat_telemetry.heartbeat->ready);
   ASSERT_TRUE(heartbeat_telemetry.global_position);

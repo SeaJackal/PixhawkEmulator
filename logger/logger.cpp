@@ -1,6 +1,12 @@
 #include "logger.h"
 
+#include <chrono>
 #include <iomanip>
+#include <ios>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -20,19 +26,23 @@ const char* LevelName(Logger::Level level) {
 
 }
 
-Logger::Logger(TimePoint simulation_start) : simulation_start_(simulation_start) {}
+Logger::Logger(TimePoint simulation_start)
+    : simulation_start_(simulation_start) {}
 
 void Logger::Log(Level level, TimePoint timestamp, std::string_view message) {
   records_.push_back({level, timestamp, std::string(message)});
   buffer_ << FormatRecord(records_.back(), simulation_start_);
 }
 
-std::string Logger::FormatRecord(const Record& record, TimePoint simulation_start) {
+std::string Logger::FormatRecord(const Record& record,
+                                 TimePoint simulation_start) {
   const auto seconds =
-      std::chrono::duration<double>(record.timestamp - simulation_start).count();
+      std::chrono::duration<double>(record.timestamp - simulation_start)
+          .count();
   std::ostringstream text;
-  text << std::fixed << std::setprecision(9) << '[' << seconds << "] ["
-       << LevelName(record.level) << "] " << record.message << '\n';
+  constexpr int kTimestampPrecision = 9;
+  text << std::fixed << std::setprecision(kTimestampPrecision) << '[' << seconds
+       << "] [" << LevelName(record.level) << "] " << record.message << '\n';
   return text.str();
 }
 

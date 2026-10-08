@@ -1,19 +1,26 @@
 #pragma once
 
-#include "dynamic_model.h"
-#include "logger.h"
-#include "simulation_time.h"
-
 #include <cstdint>
 #include <optional>
 #include <string_view>
+
+#include "dynamic_model.h"
+#include "logger.h"
+#include "simulation_time.h"
 
 class ControllerStateMachine {
  public:
   using TimePoint = simulation::TimePoint;
   using Duration = simulation::Duration;
 
-  enum class State { kGuarded, kNotReady, kReady, kManual, kAutomatic, kHolding };
+  enum class State {
+    kGuarded,
+    kNotReady,
+    kReady,
+    kManual,
+    kAutomatic,
+    kHolding
+  };
   enum class CommandType : std::uint8_t {
     kUnguard = 0,
     kToManual = 1,
@@ -27,6 +34,12 @@ class ControllerStateMachine {
   ControllerStateMachine(DynamicModel& model, Logger& logger,
                          TimePoint start_time,
                          Duration readiness_timeout = std::chrono::seconds{1});
+
+  ~ControllerStateMachine() = default;
+  ControllerStateMachine(const ControllerStateMachine&) = delete;
+  ControllerStateMachine& operator=(const ControllerStateMachine&) = delete;
+  ControllerStateMachine(ControllerStateMachine&&) = delete;
+  ControllerStateMachine& operator=(ControllerStateMachine&&) = delete;
 
   bool SetAutomaticControl(const Position& position,
                            const Orientation& orientation);

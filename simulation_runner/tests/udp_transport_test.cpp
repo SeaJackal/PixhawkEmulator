@@ -1,18 +1,35 @@
-#include "controller.h"
-#include "simulation_runner.h"
 #include "udp_transport.h"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
-
-#include <array>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/system/error_code.hpp>
 #include <chrono>
+#include <cstddef>
+#include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <utility>
+#include <vector>
+
+#include "battery_model.h"
+#include "control_messages.h"
+#include "controller.h"
+#include "controller_state_machine.h"
+#include "dynamic_model.h"
+#include "logger.h"
+#include "message_type.h"
+#include "simulation_runner.h"
+#include "simulation_time.h"
+#include "telemetry.h"
+#include "telemetry_serialization.h"
 
 namespace {
 
@@ -22,10 +39,15 @@ template <typename Receive>
 std::optional<std::vector<std::byte>> ReceiveUntil(
     Receive receive, std::chrono::milliseconds timeout = 100ms) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
-  do {
-    if (auto bytes = receive()) return bytes;
+  while (true) {
+    if (auto bytes = receive()) {
+      return bytes;
+    }
     std::this_thread::sleep_for(1ms);
-  } while (std::chrono::steady_clock::now() < deadline);
+    if (std::chrono::steady_clock::now() >= deadline) {
+      break;
+    }
+  }
   return std::nullopt;
 }
 
@@ -46,16 +68,17 @@ class UdpTest : public ::testing::Test {
   void Send(const UdpEndpoint& endpoint, const std::vector<std::byte>& bytes) {
     const boost::asio::ip::udp::endpoint destination{
         boost::asio::ip::make_address_v4(endpoint.address), endpoint.port};
-    ASSERT_EQ(peer.send_to(boost::asio::buffer(bytes), destination), bytes.size());
+    ASSERT_EQ(peer.send_to(boost::asio::buffer(bytes), destination),
+              bytes.size());
   }
 
   std::optional<std::vector<std::byte>> ReceivePeer() {
     return ReceiveUntil([&]() -> std::optional<std::vector<std::byte>> {
-      std::array<std::byte, 65536> bytes;
+      std::array<std::byte, 65536> bytes{};
       boost::asio::ip::udp::endpoint source;
       boost::system::error_code error;
-      const auto count = peer.receive_from(boost::asio::buffer(bytes), source,
-                                           0, error);
+      const auto count =
+          peer.receive_from(boost::asio::buffer(bytes), source, 0, error);
       if (error == boost::asio::error::would_block ||
           error == boost::asio::error::try_again ||
           error == boost::asio::error::interrupted) {
@@ -66,7 +89,9 @@ class UdpTest : public ::testing::Test {
                                 "receive_from");
       }
       last_source = source;
-      return std::vector<std::byte>(bytes.begin(), bytes.begin() + count);
+      return std::vector<std::byte>(
+          bytes.begin(),
+          std::next(bytes.begin(), static_cast<std::ptrdiff_t>(count)));
     });
   }
 };
@@ -136,7 +161,7 @@ TEST_F(UdpTest, BothListenersFilterToSharedPeerAndReleasePorts) {
 }
 
 TEST_F(UdpTest, RejectsInvalidAddressesAndBindConflicts) {
-  UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
+  UdpTransport const transport{{"127.0.0.1", 0}, peer_endpoint};
   EXPECT_THROW((UdpTransport{transport.LocalEndpoint(), peer_endpoint}),
                std::system_error);
   for (const auto* address : {"invalid", "localhost", "::1"}) {
@@ -150,7 +175,7 @@ TEST_F(UdpTest, RejectsInvalidAddressesAndBindConflicts) {
 TEST_F(UdpTest, ReleasesBoundPortOnDestruction) {
   UdpEndpoint local;
   {
-    UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
+    UdpTransport const transport{{"127.0.0.1", 0}, peer_endpoint};
     local = transport.LocalEndpoint();
   }
   EXPECT_NO_THROW((UdpTransport{local, peer_endpoint}));
@@ -158,7 +183,8 @@ TEST_F(UdpTest, ReleasesBoundPortOnDestruction) {
 
 TEST_F(UdpTest, OversizedSendThrowsStandardSystemError) {
   UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
-  EXPECT_THROW(transport.Send(std::vector<std::byte>(65536)), std::system_error);
+  EXPECT_THROW(transport.Send(std::vector<std::byte>(65536)),
+               std::system_error);
 }
 
 TEST_F(UdpTest, RunnerDeliversCommandsAndReturnsTelemetryOverLoopback) {
@@ -171,12 +197,15 @@ TEST_F(UdpTest, RunnerDeliversCommandsAndReturnsTelemetryOverLoopback) {
   UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
   UdpTransport manual_transport{{"127.0.0.1", 0}, peer_endpoint};
   SimulationRunner runner{controller, transport, manual_transport,
-      NetworkEmulator{2ms}, NetworkEmulator{3ms}};
+                          NetworkEmulator{2ms}, NetworkEmulator{3ms}};
   using Command = ControllerStateMachine::CommandType;
   const auto local = transport.LocalEndpoint();
-  Send(local, NetworkMessage{CommandMessage{start + 5ms, Command::kUnguard}}.data);
-  Send(manual_transport.LocalEndpoint(), NetworkMessage{CommandMessage{start + 6ms, Command::kToManual}}.data);
-  Send(manual_transport.LocalEndpoint(), NetworkMessage{ControlMessage{start + 7ms, {1, 0, 0}, {}}}.data);
+  Send(local,
+       NetworkMessage{CommandMessage{start + 5ms, Command::kUnguard}}.data);
+  Send(manual_transport.LocalEndpoint(),
+       NetworkMessage{CommandMessage{start + 6ms, Command::kToManual}}.data);
+  Send(manual_transport.LocalEndpoint(),
+       NetworkMessage{ControlMessage{start + 7ms, {1, 0, 0}, {}}}.data);
   for (int i = 0; i < 14; ++i) {
     runner.RunOnce();
   }
@@ -207,8 +236,8 @@ TEST_F(UdpTest, RunnerRoutesControlsAndCommandsFromBothListeners) {
   Controller controller{model, battery, state_machine, start};
   UdpTransport automatic{{"127.0.0.1", 0}, peer_endpoint};
   UdpTransport manual{{"127.0.0.1", 0}, peer_endpoint};
-  SimulationRunner runner{controller, automatic, manual,
-      NetworkEmulator{1ms}, NetworkEmulator{0ms}};
+  SimulationRunner runner{controller, automatic, manual, NetworkEmulator{1ms},
+                          NetworkEmulator{0ms}};
   using Command = ControllerStateMachine::CommandType;
   Send(automatic.LocalEndpoint(),
        NetworkMessage{CommandMessage{start + 1ms, Command::kUnguard}}.data);
@@ -220,23 +249,29 @@ TEST_F(UdpTest, RunnerRoutesControlsAndCommandsFromBothListeners) {
        NetworkMessage{CommandMessage{start + 4ms, Command::kToAutomatic}}.data);
   Send(automatic.LocalEndpoint(),
        NetworkMessage{ControlMessage{start + 5ms, {-1, 0, 0}, {}}}.data);
-  for (int i = 0; i < 3; ++i) runner.RunOnce();
+  for (int i = 0; i < 3; ++i) {
+    runner.RunOnce();
+  }
   EXPECT_EQ(state_machine.GetState(), ControllerStateMachine::State::kManual);
   EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, 1);
   runner.RunOnce();
   runner.RunOnce();
   EXPECT_EQ(controller.GetTime(), start + 6ms);
-  EXPECT_EQ(state_machine.GetState(), ControllerStateMachine::State::kAutomatic);
+  EXPECT_EQ(state_machine.GetState(),
+            ControllerStateMachine::State::kAutomatic);
   EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, -1);
 }
 
 TEST_F(UdpTest, RunnerSleepsUntilTelemetryAfterDrainingSocket) {
   UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};
-  std::chrono::steady_clock clock;
-  const auto simulation_start = clock.now();
-  const auto bytes = NetworkMessage{CommandMessage{
-      simulation_start + 1s, ControllerStateMachine::CommandType::kHold}}.data;
-  for (int i = 0; i < 100; ++i) Send(transport.LocalEndpoint(), bytes);
+  const auto simulation_start = std::chrono::steady_clock::now();
+  const auto bytes =
+      NetworkMessage{CommandMessage{simulation_start + 1s,
+                                    ControllerStateMachine::CommandType::kHold}}
+          .data;
+  for (int i = 0; i < 100; ++i) {
+    Send(transport.LocalEndpoint(), bytes);
+  }
   DynamicModel model;
   BatteryModel battery{2.0, 2.0};
   Logger logger{simulation_start};
@@ -244,11 +279,11 @@ TEST_F(UdpTest, RunnerSleepsUntilTelemetryAfterDrainingSocket) {
   Controller controller{model, battery, state_machine, simulation_start};
   UdpTransport manual_transport{{"127.0.0.1", 0}, peer_endpoint};
   SimulationRunner runner{controller, transport, manual_transport,
-      NetworkEmulator{0ms}, NetworkEmulator{0ms}};
+                          NetworkEmulator{0ms}, NetworkEmulator{0ms}};
   runner.RunOnce();
   EXPECT_FALSE(transport.Receive());
   runner.RunOnce();
-  EXPECT_GE(clock.now() - simulation_start, 20ms);
+  EXPECT_GE(std::chrono::steady_clock::now() - simulation_start, 20ms);
   EXPECT_EQ(controller.GetTime(), simulation_start + 20ms);
   EXPECT_FALSE(transport.Receive());
 }

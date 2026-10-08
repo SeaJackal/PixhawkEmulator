@@ -1,10 +1,10 @@
 #pragma once
 
+#include <optional>
+
 #include "controller_state_machine.h"
 #include "dynamic_model.h"
 #include "simulation_time.h"
-
-#include <optional>
 
 struct HeartbeatMessage {
   simulation::TimePoint timestamp;
@@ -33,7 +33,7 @@ struct BatteryStatusMessage {
 };
 
 struct Telemetry {
-  simulation::TimePoint timestamp{};
+  simulation::TimePoint timestamp;
   bool has_telemetry = false;
   std::optional<HeartbeatMessage> heartbeat;
   std::optional<AttitudeMessage> attitude;

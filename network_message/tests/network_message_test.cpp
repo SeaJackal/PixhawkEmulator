@@ -2,9 +2,18 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
+
+#include "control_messages.h"
+#include "controller_state_machine.h"
+#include "message_type.h"
+#include "simulation_time.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -13,8 +22,8 @@ using namespace std::chrono_literals;
 template <typename Message>
 void ExpectPacket(const Message& message, MessageType type, std::byte code) {
   static_assert(std::is_convertible_v<Message, NetworkMessage>);
-  constexpr auto inferred_type = NetworkMessage::GetType<Message>();
-  EXPECT_EQ(inferred_type, type);
+  constexpr auto kInferredType = NetworkMessage::GetType<Message>();
+  EXPECT_EQ(kInferredType, type);
   const NetworkMessage network = message;
   auto expected = Serialize(message);
   expected.push_back(code);
@@ -36,8 +45,9 @@ void ExpectPacket(const Message& message, MessageType type, std::byte code) {
 
 TEST(NetworkMessageTest, ConstructorsRoundTripEveryMessageType) {
   const simulation::TimePoint time{42s + 125ms};
-  ExpectPacket(HeartbeatMessage{time, ControllerStateMachine::State::kReady, true},
-               MessageType::kHeartbeat, std::byte{0});
+  ExpectPacket(
+      HeartbeatMessage{time, ControllerStateMachine::State::kReady, true},
+      MessageType::kHeartbeat, std::byte{0});
   ExpectPacket(AttitudeMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
                MessageType::kAttitude, std::byte{1});
   ExpectPacket(GlobalPositionMessage{time, {1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}},
@@ -51,25 +61,23 @@ TEST(NetworkMessageTest, ConstructorsRoundTripEveryMessageType) {
 }
 
 TEST(NetworkMessageTest, OwnsSerializedBytesAfterTemporaryArgumentExpires) {
-  const NetworkMessage network{
-      HeartbeatMessage{simulation::TimePoint{7s},
-                       ControllerStateMachine::State::kReady, true}};
+  const NetworkMessage network{HeartbeatMessage{
+      simulation::TimePoint{7s}, ControllerStateMachine::State::kReady, true}};
 
   EXPECT_EQ(network.timestamp, simulation::TimePoint{7s});
   EXPECT_EQ(network.type, MessageType::kHeartbeat);
-  EXPECT_EQ(network.data,
-            (std::vector<std::byte>{std::byte{2}, std::byte{1},
-                                    std::byte{0x58}, std::byte{0x1b},
-                                    std::byte{0x00}, std::byte{0x00},
-                                    std::byte{0x00}, std::byte{0x00},
-                                    std::byte{0x00}, std::byte{0x00},
-                                    std::byte{0}}));
+  EXPECT_EQ(network.data, (std::vector<std::byte>{
+                              std::byte{2}, std::byte{1}, std::byte{0x58},
+                              std::byte{0x1b}, std::byte{0x00}, std::byte{0x00},
+                              std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+                              std::byte{0x00}, std::byte{0}}));
 }
 
-TEST(NetworkMessageTest, ByteConstructorAcceptsMovedBytesAndRestoresMilliseconds) {
-  const NetworkMessage original{CommandMessage{
-      simulation::TimePoint{-2s - 123ms - 456ns},
-      ControllerStateMachine::CommandType::kHold}};
+TEST(NetworkMessageTest,
+     ByteConstructorAcceptsMovedBytesAndRestoresMilliseconds) {
+  const NetworkMessage original{
+      CommandMessage{simulation::TimePoint{-2s - 123ms - 456ns},
+                     ControllerStateMachine::CommandType::kHold}};
   auto bytes = original.data;
   const NetworkMessage decoded{std::move(bytes)};
   EXPECT_EQ(decoded.timestamp, simulation::TimePoint{-2s - 123ms});
@@ -89,8 +97,8 @@ TEST(NetworkMessageTest, ByteConstructorRejectsMissingOrUnknownType) {
 }
 
 TEST(NetworkMessageTest, ByteConstructorValidatesPayloadContents) {
-  const NetworkMessage heartbeat{HeartbeatMessage{
-      {}, ControllerStateMachine::State::kReady, true}};
+  const NetworkMessage heartbeat{
+      HeartbeatMessage{{}, ControllerStateMachine::State::kReady, true}};
   auto bytes = heartbeat.data;
   bytes[0] = std::byte{255};
   EXPECT_THROW(NetworkMessage{bytes}, std::invalid_argument);
@@ -98,8 +106,8 @@ TEST(NetworkMessageTest, ByteConstructorValidatesPayloadContents) {
   bytes[1] = std::byte{2};
   EXPECT_THROW(NetworkMessage{bytes}, std::invalid_argument);
 
-  const NetworkMessage command{CommandMessage{
-      {}, ControllerStateMachine::CommandType::kHold}};
+  const NetworkMessage command{
+      CommandMessage{{}, ControllerStateMachine::CommandType::kHold}};
   bytes = command.data;
   bytes[0] = std::byte{255};
   EXPECT_THROW(NetworkMessage{bytes}, std::invalid_argument);
@@ -111,14 +119,16 @@ TEST(NetworkMessageTest, ByteConstructorValidatesPayloadContents) {
 }
 
 TEST(NetworkMessageTest, PropagatesSerializationFailure) {
-  const HeartbeatMessage message{
-      simulation::TimePoint{1s}, static_cast<ControllerStateMachine::State>(99), false};
+  const HeartbeatMessage message{simulation::TimePoint{1s},
+                                 static_cast<ControllerStateMachine::State>(99),
+                                 false};
 
   EXPECT_THROW(NetworkMessage{message}, std::invalid_argument);
 }
 
 TEST(NetworkMessageTest, CopyAndMovePreserveTimestampTypeAndBytes) {
-  const BatteryStatusMessage message{simulation::TimePoint{2s}, 12.0, 10.0, 2.0};
+  const BatteryStatusMessage message{simulation::TimePoint{2s}, 12.0, 10.0,
+                                     2.0};
   const NetworkMessage original{message};
 
   NetworkMessage copied{original};

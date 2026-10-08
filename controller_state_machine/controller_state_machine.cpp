@@ -4,6 +4,9 @@
 #include <cassert>
 #include <string>
 
+#include "dynamic_model.h"
+#include "logger.h"
+
 namespace {
 
 const char* StateName(ControllerStateMachine::State state) {
