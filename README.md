@@ -26,64 +26,13 @@ does not run natively on macOS or Windows. Running in the image above provides
 the matching libraries.
 
 ```bash
-./build/docker/pixhawk_simulator
+./build/docker/pixhawk_simulator --config simulation_config/example.json
 ```
 
-In another terminal, with Python 3 installed:
+Use json config to configure simulation and inject errors - network shutdown or delay, GNSS error.
+
+In another terminal, with Python 3 installed (runs simple client, which produces commands for simulator and prints telemetry):
 
 ```bash
 python3 client.py
 ```
-
-## Configuration
-
-The default UDP endpoints are:
-
-| Purpose | Address |
-| --- | --- |
-| Automatic commands | `127.0.0.1:14560` |
-| Manual commands | `127.0.0.1:14561` |
-| Telemetry destination | `127.0.0.1:14550` |
-
-No configuration file is required. To load the supplied example or inspect
-command-line options:
-
-```bash
-./build/docker/pixhawk_simulator --config simulation_config/example.json
-./build/docker/pixhawk_simulator --help
-```
-
-When running in Docker, append these same arguments after
-`./build/docker/pixhawk_simulator` in the `docker run` command.
-
-[`simulation_config/example.json`](simulation_config/example.json) demonstrates
-model and battery settings, readiness timing, GNSS outages, UDP endpoints,
-optional syslog output, and network delay/drop filters. It enables simulated
-faults and syslog output; running without it uses the defaults.
-Command-line options override configuration-file values, for example:
-
-```bash
-./build/docker/pixhawk_simulator \
-  --bind-port 14660 --peer-port 14650 --outbound-latency-ms 50
-python3 client.py --peer-port 14660 --bind-port 14650
-```
-
-Run the simulator and client commands in separate terminals. Stop the simulator
-before starting another instance on the same listening ports.
-
-## Build without Docker
-
-For a native Ubuntu 24.04 build, install the dependencies and use a separate
-build directory:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential cmake ninja-build ca-certificates python3
-cmake -S . -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-cmake --build build/native --parallel 2
-./build/native/pixhawk_simulator
-```
-
-Other environments need a C++17 compiler, CMake 3.20 or newer, internet access
-for the initial Boost download, and GoogleTest when tests are enabled. The UDP
-transport uses POSIX sockets, so use Linux for the documented build and run flow.
