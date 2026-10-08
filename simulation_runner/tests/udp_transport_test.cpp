@@ -35,9 +35,67 @@ namespace {
 
 using namespace std::chrono_literals;
 
+class UdpTest : public ::testing::Test {
+ protected:
+  boost::asio::io_context context;
+  boost::asio::ip::udp::socket peer{context};
+  UdpEndpoint peer_endpoint;
+  boost::asio::ip::udp::endpoint last_source;
+
+  void SetUp() override;
+
+  void Send(const UdpEndpoint& endpoint, const std::vector<std::byte>& bytes);
+
+  std::optional<std::vector<std::byte>> ReceivePeer();
+};
+
 template <typename Receive>
 std::optional<std::vector<std::byte>> ReceiveUntil(
-    Receive receive, std::chrono::milliseconds timeout = 100ms) {
+    Receive receive, std::chrono::milliseconds timeout = 100ms);
+
+// -----------------------------------------------------------------------------
+
+void UdpTest::SetUp() {
+  peer.open(boost::asio::ip::udp::v4());
+  peer.bind({boost::asio::ip::address_v4::loopback(), 0});
+  peer.non_blocking(true);
+  peer_endpoint = {"127.0.0.1", peer.local_endpoint().port()};
+}
+
+void UdpTest::Send(const UdpEndpoint& endpoint,
+                   const std::vector<std::byte>& bytes) {
+  const boost::asio::ip::udp::endpoint destination{
+      boost::asio::ip::make_address_v4(endpoint.address), endpoint.port};
+  ASSERT_EQ(peer.send_to(boost::asio::buffer(bytes), destination),
+            bytes.size());
+}
+
+std::optional<std::vector<std::byte>> UdpTest::ReceivePeer() {
+  return ReceiveUntil([&]() -> std::optional<std::vector<std::byte>> {
+    std::array<std::byte, 65536> bytes{};
+    boost::asio::ip::udp::endpoint source;
+    boost::system::error_code error;
+    const auto count =
+        peer.receive_from(boost::asio::buffer(bytes), source, 0, error);
+    if (error == boost::asio::error::would_block ||
+        error == boost::asio::error::try_again ||
+        error == boost::asio::error::interrupted) {
+      return std::nullopt;
+    }
+    if (error) {
+      throw std::system_error(static_cast<std::error_code>(error),
+                              "receive_from");
+    }
+    last_source = source;
+    return std::vector<std::byte>(
+        bytes.begin(),
+        std::next(bytes.begin(), static_cast<std::ptrdiff_t>(count)));
+  });
+}
+
+template <typename Receive>
+std::optional<std::vector<std::byte>> ReceiveUntil(
+    Receive receive, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (true) {
     if (auto bytes = receive()) {
@@ -50,51 +108,6 @@ std::optional<std::vector<std::byte>> ReceiveUntil(
   }
   return std::nullopt;
 }
-
-class UdpTest : public ::testing::Test {
- protected:
-  boost::asio::io_context context;
-  boost::asio::ip::udp::socket peer{context};
-  UdpEndpoint peer_endpoint;
-  boost::asio::ip::udp::endpoint last_source;
-
-  void SetUp() override {
-    peer.open(boost::asio::ip::udp::v4());
-    peer.bind({boost::asio::ip::address_v4::loopback(), 0});
-    peer.non_blocking(true);
-    peer_endpoint = {"127.0.0.1", peer.local_endpoint().port()};
-  }
-
-  void Send(const UdpEndpoint& endpoint, const std::vector<std::byte>& bytes) {
-    const boost::asio::ip::udp::endpoint destination{
-        boost::asio::ip::make_address_v4(endpoint.address), endpoint.port};
-    ASSERT_EQ(peer.send_to(boost::asio::buffer(bytes), destination),
-              bytes.size());
-  }
-
-  std::optional<std::vector<std::byte>> ReceivePeer() {
-    return ReceiveUntil([&]() -> std::optional<std::vector<std::byte>> {
-      std::array<std::byte, 65536> bytes{};
-      boost::asio::ip::udp::endpoint source;
-      boost::system::error_code error;
-      const auto count =
-          peer.receive_from(boost::asio::buffer(bytes), source, 0, error);
-      if (error == boost::asio::error::would_block ||
-          error == boost::asio::error::try_again ||
-          error == boost::asio::error::interrupted) {
-        return std::nullopt;
-      }
-      if (error) {
-        throw std::system_error(static_cast<std::error_code>(error),
-                                "receive_from");
-      }
-      last_source = source;
-      return std::vector<std::byte>(
-          bytes.begin(),
-          std::next(bytes.begin(), static_cast<std::ptrdiff_t>(count)));
-    });
-  }
-};
 
 TEST_F(UdpTest, NonblockingDatagramsRoundTrip) {
   UdpTransport transport{{"127.0.0.1", 0}, peer_endpoint};

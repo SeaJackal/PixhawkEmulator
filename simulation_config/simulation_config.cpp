@@ -32,6 +32,37 @@ using Value = boost::json::value;
 using Duration = simulation::Duration;
 using TimePoint = simulation::TimePoint;
 
+[[noreturn]] void Invalid(const std::string& path, const std::string& reason);
+
+const Object& ReadObject(const Value& value, const std::string& path,
+                         std::initializer_list<std::string_view> keys);
+
+const Value& Required(const Object& object, const char* key,
+                      const std::string& path);
+
+std::string ReadString(const Value& value, const std::string& path);
+
+std::uint64_t ReadUnsigned(const Value& value, const std::string& path);
+
+double ReadNumber(const Value& value, const std::string& path);
+
+Duration ReadDuration(const Value& value, const std::string& path);
+
+MessageType ReadMessageType(const Value& value, const std::string& path);
+
+void ReadEndpoint(const Value& value, const std::string& path,
+                  UdpEndpoint& endpoint, bool peer);
+
+NetworkConfig ReadNetwork(const Value& value, const std::string& path);
+
+ControllerConfig ReadController(const Value& value);
+
+BatteryConfig ReadBattery(const Value& value);
+
+TimePoint AddOffset(TimePoint start, Duration offset, const std::string& path);
+
+// -----------------------------------------------------------------------------
+
 [[noreturn]] void Invalid(const std::string& path, const std::string& reason) {
   throw std::invalid_argument(path + ": " + reason);
 }

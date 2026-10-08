@@ -4,7 +4,17 @@ project(PixhawkSimulator LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
-find_package(Boost 1.75 REQUIRED COMPONENTS json)
+
+include(FetchContent)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+set(BOOST_INCLUDE_LIBRARIES asio json)
+FetchContent_Declare(Boost
+    URL https://github.com/boostorg/boost/releases/download/boost-1.85.0/boost-1.85.0-cmake.tar.xz
+    URL_HASH SHA256=0a9cc56ceae46986f5f4d43fe0311d90cf6d2fa9028258a95cab49ffdacf92ad
+)
+FetchContent_MakeAvailable(Boost)
 
 include(CTest)
 if(BUILD_TESTING)

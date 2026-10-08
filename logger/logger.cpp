@@ -10,6 +10,10 @@
 
 namespace {
 
+const char* LevelName(Logger::Level level);
+
+// -----------------------------------------------------------------------------
+
 const char* LevelName(Logger::Level level) {
   switch (level) {
     case Logger::Level::kDebug:

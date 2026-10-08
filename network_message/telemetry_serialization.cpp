@@ -51,6 +51,36 @@ static_assert(std::numeric_limits<simulation::Duration::rep>::is_signed);
 static_assert(std::numeric_limits<simulation::Duration::rep>::digits ==
               kTimestampValueBits);
 
+void CheckSize(const std::vector<std::byte>& bytes, std::size_t expected);
+
+std::uint64_t ReadUint64(const std::vector<std::byte>& bytes,
+                         std::size_t offset);
+
+double ReadDouble(const std::vector<std::byte>& bytes, std::size_t offset);
+
+simulation::TimePoint ReadTimestamp(const std::vector<std::byte>& bytes);
+
+ControllerStateMachine::State DeserializeState(std::byte value);
+
+void AppendUint64(std::vector<std::byte>& bytes, std::uint64_t bits);
+
+void AppendTimestamp(std::vector<std::byte>& bytes,
+                     simulation::TimePoint timestamp);
+
+void AppendDouble(std::vector<std::byte>& bytes, double value);
+
+std::vector<std::byte> SerializeControl(simulation::TimePoint timestamp,
+                                        const Position& position,
+                                        const Orientation& orientation);
+
+std::byte SerializeState(ControllerStateMachine::State state);
+
+template <typename Message>
+void AppendOptional(std::vector<std::byte>& bytes,
+                    const std::optional<Message>& message, std::byte flag);
+
+// -----------------------------------------------------------------------------
+
 void CheckSize(const std::vector<std::byte>& bytes, std::size_t expected) {
   if (bytes.size() != expected) {
     throw std::invalid_argument("Invalid message payload size");

@@ -46,11 +46,8 @@ class Controller {
   bool SetAutomaticControl(const Position& position,
                            const Orientation& orientation);
   Telemetry Process(TimePoint until);
-  [[nodiscard]] TimePoint GetTime() const { return time_; }
-  [[nodiscard]] TimePoint NextTelemetryTime() const {
-    return std::min({next_heartbeat_, next_attitude_, next_global_position_,
-                     next_battery_status_});
-  }
+  [[nodiscard]] TimePoint GetTime() const;
+  [[nodiscard]] TimePoint NextTelemetryTime() const;
 
  private:
   Telemetry CollectTelemetry();
@@ -69,6 +66,21 @@ class Controller {
   };
   std::vector<GnssLoss> gnss_losses_;
 };
+
+// -----------------------------------------------------------------------------
+
+template <typename Model, typename Battery, typename StateMachine>
+typename Controller<Model, Battery, StateMachine>::TimePoint
+Controller<Model, Battery, StateMachine>::GetTime() const {
+  return time_;
+}
+
+template <typename Model, typename Battery, typename StateMachine>
+typename Controller<Model, Battery, StateMachine>::TimePoint
+Controller<Model, Battery, StateMachine>::NextTelemetryTime() const {
+  return std::min({next_heartbeat_, next_attitude_, next_global_position_,
+                   next_battery_status_});
+}
 
 template <typename Model, typename Battery, typename StateMachine>
 Controller<Model, Battery, StateMachine>::Controller(

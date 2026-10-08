@@ -17,6 +17,12 @@
 
 namespace {
 
+boost::asio::ip::udp::endpoint Address(const UdpEndpoint& endpoint);
+
+void Check(const boost::system::error_code& error, const char* operation);
+
+// -----------------------------------------------------------------------------
+
 boost::asio::ip::udp::endpoint Address(const UdpEndpoint& endpoint) {
   boost::system::error_code error;
   const auto address =

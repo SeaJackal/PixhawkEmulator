@@ -9,6 +9,12 @@ namespace {
 using namespace std::chrono_literals;
 constexpr double kTolerance = 1e-12;
 
+void ExpectPosition(const DynamicModel& model, const Position& expected);
+
+void ExpectOrientation(const DynamicModel& model, const Orientation& expected);
+
+// -----------------------------------------------------------------------------
+
 void ExpectPosition(const DynamicModel& model, const Position& expected) {
   const auto actual = model.GetPosition();
   EXPECT_NEAR(actual.x_meters, expected.x_meters, kTolerance);

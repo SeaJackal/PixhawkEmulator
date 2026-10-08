@@ -24,7 +24,13 @@ using TimePoint = simulation::TimePoint;
 using Duration = simulation::Duration;
 
 NetworkMessage MessageAt(TimePoint time,
-                         MessageType type = MessageType::kHeartbeat) {
+                         MessageType type = MessageType::kHeartbeat);
+
+void ExpectInvalid(std::string_view json, const std::string& field);
+
+// -----------------------------------------------------------------------------
+
+NetworkMessage MessageAt(TimePoint time, MessageType type) {
   auto message = NetworkMessage{
       HeartbeatMessage{time, ControllerStateMachine::State::kReady, true}};
   message.type = type;

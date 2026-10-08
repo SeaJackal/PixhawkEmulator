@@ -30,20 +30,128 @@ class ControllerTelemetryTest : public ::testing::Test {
   ControllerStateMachine state_machine{model, logger, kStart};
   Controller<> controller{model, battery, state_machine, kStart};
 
-  Telemetry Steps(int count) {
-    Telemetry telemetry;
-    for (int i = 0; i < count; ++i) {
-      telemetry = controller.Process(controller.GetTime() + 20ms);
-    }
-    return telemetry;
-  }
+  Telemetry Steps(int count);
 
-  void Manual() {
-    ASSERT_TRUE(controller.Command(Command::kUnguard));
-    Steps(50);
-    ASSERT_TRUE(controller.Command(Command::kToManual));
-  }
+  void Manual();
 };
+
+class StubModel {
+ public:
+  double current = 7.0;
+  [[nodiscard]] double GetCurrentAmps() const;
+  [[nodiscard]] Orientation GetOrientation() const;
+  [[nodiscard]] AngularVelocity GetAngularVelocity() const;
+  [[nodiscard]] Position GetPosition() const;
+  [[nodiscard]] LinearVelocity GetLinearVelocity() const;
+};
+
+class RecordingBattery {
+ public:
+  std::vector<std::pair<double, simulation::Duration>> calls;
+  bool Process(double current, simulation::Duration elapsed);
+  [[nodiscard]] double GetVoltageVolts() const;
+  [[nodiscard]] double GetChargeAmpHours() const;
+};
+
+class StubStateMachine {
+ public:
+  using TimePoint = simulation::TimePoint;
+  using CommandType = Controller<>::CommandType;
+
+  StubStateMachine(StubModel& model, TimePoint start);
+
+  ~StubStateMachine() = default;
+  StubStateMachine(const StubStateMachine&) = delete;
+  StubStateMachine& operator=(const StubStateMachine&) = delete;
+  StubStateMachine(StubStateMachine&&) = delete;
+  StubStateMachine& operator=(StubStateMachine&&) = delete;
+
+  std::vector<TimePoint> endpoints;
+  CommandType command = CommandType::kLand;
+  Position target;
+  Orientation orientation;
+  bool Command(CommandType value);
+  bool SetManualControl(const Position& position, const Orientation& angles);
+  bool SetAutomaticControl(const Position& position, const Orientation& angles);
+  [[nodiscard]] State GetState() const;
+  TimePoint Process(TimePoint until);
+
+ private:
+  StubModel& model_;
+  TimePoint start_;
+};
+
+// -----------------------------------------------------------------------------
+
+Telemetry ControllerTelemetryTest::Steps(int count) {
+  Telemetry telemetry;
+  for (int i = 0; i < count; ++i) {
+    telemetry = controller.Process(controller.GetTime() + 20ms);
+  }
+  return telemetry;
+}
+
+void ControllerTelemetryTest::Manual() {
+  ASSERT_TRUE(controller.Command(Command::kUnguard));
+  Steps(50);
+  ASSERT_TRUE(controller.Command(Command::kToManual));
+}
+
+double StubModel::GetCurrentAmps() const { return current; }
+
+Orientation StubModel::GetOrientation() const { return {1.0, 2.0, 3.0}; }
+
+AngularVelocity StubModel::GetAngularVelocity() const {
+  return {4.0, 5.0, 6.0};
+}
+
+Position StubModel::GetPosition() const { return {7.0, 8.0, 9.0}; }
+
+LinearVelocity StubModel::GetLinearVelocity() const {
+  return {10.0, 11.0, 12.0};
+}
+
+bool RecordingBattery::Process(double current, simulation::Duration elapsed) {
+  calls.emplace_back(current, elapsed);
+  return true;
+}
+
+double RecordingBattery::GetVoltageVolts() const { return 11.5; }
+
+double RecordingBattery::GetChargeAmpHours() const { return 1.5; }
+
+StubStateMachine::StubStateMachine(StubModel& model, TimePoint start)
+    : model_(model), start_(start) {}
+
+bool StubStateMachine::Command(CommandType value) {
+  command = value;
+  return false;
+}
+
+bool StubStateMachine::SetManualControl(const Position& position,
+                                        const Orientation& angles) {
+  target = position;
+  orientation = angles;
+  return false;
+}
+
+bool StubStateMachine::SetAutomaticControl(const Position& position,
+                                           const Orientation& angles) {
+  target = position;
+  orientation = angles;
+  return true;
+}
+
+State StubStateMachine::GetState() const { return State::kHolding; }
+
+StubStateMachine::TimePoint StubStateMachine::Process(TimePoint until) {
+  endpoints.push_back(until);
+  if (endpoints.size() == 1) {
+    model_.current = 2.0;
+    return start_ + 7ms;
+  }
+  return until;
+}
 
 TEST_F(ControllerTelemetryTest, ReturnsOnlyMessagesDueAtEachFixedStep) {
   EXPECT_EQ(Controller<>::kProcessPeriod, 20ms);
@@ -311,79 +419,6 @@ TEST_F(ControllerTelemetryTest, ContinuesAtCriticalWithoutControllerLogging) {
   EXPECT_DOUBLE_EQ(telemetry.battery_status->current_amps, 10.0);
   EXPECT_TRUE(logger.GetText().empty());
 }
-
-class StubModel {
- public:
-  double current = 7.0;
-  [[nodiscard]] double GetCurrentAmps() const { return current; }
-  [[nodiscard]] Orientation GetOrientation() const { return {1.0, 2.0, 3.0}; }
-  [[nodiscard]] AngularVelocity GetAngularVelocity() const {
-    return {4.0, 5.0, 6.0};
-  }
-  [[nodiscard]] Position GetPosition() const { return {7.0, 8.0, 9.0}; }
-  [[nodiscard]] LinearVelocity GetLinearVelocity() const {
-    return {10.0, 11.0, 12.0};
-  }
-};
-
-class RecordingBattery {
- public:
-  std::vector<std::pair<double, simulation::Duration>> calls;
-  bool Process(double current, simulation::Duration elapsed) {
-    calls.emplace_back(current, elapsed);
-    return true;
-  }
-  [[nodiscard]] double GetVoltageVolts() const { return 11.5; }
-  [[nodiscard]] double GetChargeAmpHours() const { return 1.5; }
-};
-
-class StubStateMachine {
- public:
-  using TimePoint = simulation::TimePoint;
-  using CommandType = Controller<>::CommandType;
-
-  StubStateMachine(StubModel& model, TimePoint start)
-      : model_(model), start_(start) {}
-
-  ~StubStateMachine() = default;
-  StubStateMachine(const StubStateMachine&) = delete;
-  StubStateMachine& operator=(const StubStateMachine&) = delete;
-  StubStateMachine(StubStateMachine&&) = delete;
-  StubStateMachine& operator=(StubStateMachine&&) = delete;
-
-  std::vector<TimePoint> endpoints;
-  CommandType command = CommandType::kLand;
-  Position target;
-  Orientation orientation;
-  bool Command(CommandType value) {
-    command = value;
-    return false;
-  }
-  bool SetManualControl(const Position& position, const Orientation& angles) {
-    target = position;
-    orientation = angles;
-    return false;
-  }
-  bool SetAutomaticControl(const Position& position,
-                           const Orientation& angles) {
-    target = position;
-    orientation = angles;
-    return true;
-  }
-  [[nodiscard]] State GetState() const { return State::kHolding; }
-  TimePoint Process(TimePoint until) {
-    endpoints.push_back(until);
-    if (endpoints.size() == 1) {
-      model_.current = 2.0;
-      return start_ + 7ms;
-    }
-    return until;
-  }
-
- private:
-  StubModel& model_;
-  TimePoint start_;
-};
 
 TEST(ControllerInjectionTest, UsesTemplateDependenciesAndIntegratesEachEvent) {
   constexpr simulation::TimePoint kStart{123s};

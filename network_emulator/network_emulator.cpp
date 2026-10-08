@@ -12,6 +12,11 @@
 namespace {
 
 simulation::TimePoint AddDelay(simulation::TimePoint timestamp,
+                               simulation::Duration delay);
+
+// -----------------------------------------------------------------------------
+
+simulation::TimePoint AddDelay(simulation::TimePoint timestamp,
                                simulation::Duration delay) {
   if (timestamp > simulation::TimePoint::max() - delay) {
     throw std::invalid_argument("Arrival time exceeds simulation clock range");

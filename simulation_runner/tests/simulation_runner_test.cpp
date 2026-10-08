@@ -42,34 +42,12 @@ struct FakeTransport {
   std::function<void()> on_send;
   std::size_t attempts = 0;
 
-  std::optional<std::vector<std::byte>> Receive() {
-    if (fatal) {
-      throw std::runtime_error("Socket failure");
-    }
-    if (incoming.empty()) {
-      return std::nullopt;
-    }
-    auto bytes = std::move(incoming.front());
-    incoming.pop_front();
-    return bytes;
-  }
+  std::optional<std::vector<std::byte>> Receive();
 
-  void Send(const std::vector<std::byte>& bytes) {
-    ++attempts;
-    if (blocked) {
-      throw std::system_error(
-          std::make_error_code(std::errc::operation_would_block), "sendto");
-    }
-    sent.emplace_back(bytes);
-    if (on_send) {
-      on_send();
-    }
-  }
+  void Send(const std::vector<std::byte>& bytes);
 
   template <typename Message>
-  void Push(const Message& message) {
-    incoming.push_back(NetworkMessage{message}.data);
-  }
+  void Push(const Message& message);
 };
 
 class RunnerTest : public ::testing::Test {
@@ -84,17 +62,52 @@ class RunnerTest : public ::testing::Test {
   FakeTransport manual_transport;
 
   auto Runner(NetworkEmulator inbound = NetworkEmulator{0ms},
-              NetworkEmulator outbound = NetworkEmulator{0ms}) {
-    return SimulationRunner{controller, transport, manual_transport,
-                            std::move(inbound), std::move(outbound)};
-  }
+              NetworkEmulator outbound = NetworkEmulator{0ms});
 
-  void Manual() {
-    ASSERT_TRUE(controller.Command(Command::kUnguard));
-    controller.Process(start + 1ms);
-    ASSERT_TRUE(controller.Command(Command::kToManual));
-  }
+  void Manual();
 };
+
+// -----------------------------------------------------------------------------
+
+std::optional<std::vector<std::byte>> FakeTransport::Receive() {
+  if (fatal) {
+    throw std::runtime_error("Socket failure");
+  }
+  if (incoming.empty()) {
+    return std::nullopt;
+  }
+  auto bytes = std::move(incoming.front());
+  incoming.pop_front();
+  return bytes;
+}
+
+void FakeTransport::Send(const std::vector<std::byte>& bytes) {
+  ++attempts;
+  if (blocked) {
+    throw std::system_error(
+        std::make_error_code(std::errc::operation_would_block), "sendto");
+  }
+  sent.emplace_back(bytes);
+  if (on_send) {
+    on_send();
+  }
+}
+
+template <typename Message>
+void FakeTransport::Push(const Message& message) {
+  incoming.push_back(NetworkMessage{message}.data);
+}
+
+auto RunnerTest::Runner(NetworkEmulator inbound, NetworkEmulator outbound) {
+  return SimulationRunner{controller, transport, manual_transport,
+                          std::move(inbound), std::move(outbound)};
+}
+
+void RunnerTest::Manual() {
+  ASSERT_TRUE(controller.Command(Command::kUnguard));
+  controller.Process(start + 1ms);
+  ASSERT_TRUE(controller.Command(Command::kToManual));
+}
 
 TEST_F(RunnerTest, AdvancesBeforeCommandAndQueuesTelemetryBeforeSending) {
   Manual();

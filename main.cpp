@@ -32,12 +32,23 @@ namespace {
 
 class ShutdownSignal {
  public:
-  static void Stop([[maybe_unused]] int signal) { requested = 1; }
-  static bool Requested() { return requested != 0; }
+  static void Stop([[maybe_unused]] int signal);
+  static bool Requested();
 
  private:
   static inline volatile std::sig_atomic_t requested = 0;
 };
+
+int Number(std::string_view text, int maximum);
+
+std::optional<SimulationConfig> ReadOptions(
+    const std::vector<char*>& arguments);
+
+// -----------------------------------------------------------------------------
+
+void ShutdownSignal::Stop([[maybe_unused]] int signal) { requested = 1; }
+
+bool ShutdownSignal::Requested() { return requested != 0; }
 
 int Number(std::string_view text, int maximum) {
   int value = 0;

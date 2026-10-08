@@ -9,6 +9,12 @@
 
 namespace {
 
+const char* StateName(ControllerStateMachine::State state);
+
+const char* CommandName(ControllerStateMachine::CommandType command);
+
+// -----------------------------------------------------------------------------
+
 const char* StateName(ControllerStateMachine::State state) {
   using State = ControllerStateMachine::State;
   switch (state) {

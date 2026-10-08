@@ -14,6 +14,10 @@
 
 namespace {
 
+int Severity(Logger::Level level);
+
+// -----------------------------------------------------------------------------
+
 int Severity(Logger::Level level) {
   constexpr int kDebugSeverity = 7;
   constexpr int kInfoSeverity = 6;

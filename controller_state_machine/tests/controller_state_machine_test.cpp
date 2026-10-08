@@ -26,22 +26,30 @@ class ControllerTest : public ::testing::Test {
   Logger logger{kStart};
   Controller controller{model, logger, kStart};
 
-  void Ready() {
-    ASSERT_TRUE(controller.Command(Command::kUnguard));
-    ASSERT_EQ(controller.Process(kStart + 1s), kStart + 1s);
-    ASSERT_EQ(controller.GetState(), State::kReady);
-  }
+  void Ready();
 
-  void Manual() {
-    Ready();
-    ASSERT_TRUE(controller.Command(Command::kToManual));
-  }
+  void Manual();
 
-  void Automatic() {
-    Ready();
-    ASSERT_TRUE(controller.Command(Command::kToAutomatic));
-  }
+  void Automatic();
 };
+
+// -----------------------------------------------------------------------------
+
+void ControllerTest::Ready() {
+  ASSERT_TRUE(controller.Command(Command::kUnguard));
+  ASSERT_EQ(controller.Process(kStart + 1s), kStart + 1s);
+  ASSERT_EQ(controller.GetState(), State::kReady);
+}
+
+void ControllerTest::Manual() {
+  Ready();
+  ASSERT_TRUE(controller.Command(Command::kToManual));
+}
+
+void ControllerTest::Automatic() {
+  Ready();
+  ASSERT_TRUE(controller.Command(Command::kToAutomatic));
+}
 
 TEST_F(ControllerTest, StartsGuardedAndAdvancesIdleTime) {
   EXPECT_EQ(controller.GetState(), State::kGuarded);

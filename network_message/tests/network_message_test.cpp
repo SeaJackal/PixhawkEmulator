@@ -20,6 +20,11 @@ namespace {
 using namespace std::chrono_literals;
 
 template <typename Message>
+void ExpectPacket(const Message& message, MessageType type, std::byte code);
+
+// -----------------------------------------------------------------------------
+
+template <typename Message>
 void ExpectPacket(const Message& message, MessageType type, std::byte code) {
   static_assert(std::is_convertible_v<Message, NetworkMessage>);
   constexpr auto kInferredType = NetworkMessage::GetType<Message>();

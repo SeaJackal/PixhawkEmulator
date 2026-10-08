@@ -25,7 +25,11 @@ constexpr std::array kTypes{Type::kHeartbeat,      Type::kAttitude,
                             Type::kGlobalPosition, Type::kBatteryStatus,
                             Type::kCommand,        Type::kControl};
 
-NetworkMessage MessageAt(TimePoint timestamp, Type type = Type::kHeartbeat) {
+NetworkMessage MessageAt(TimePoint timestamp, Type type = Type::kHeartbeat);
+
+// -----------------------------------------------------------------------------
+
+NetworkMessage MessageAt(TimePoint timestamp, Type type) {
   switch (type) {
     case Type::kHeartbeat:
       return NetworkMessage{HeartbeatMessage{

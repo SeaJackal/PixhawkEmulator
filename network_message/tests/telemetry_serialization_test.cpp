@@ -22,6 +22,26 @@ namespace {
 using namespace std::chrono_literals;
 using State = ControllerStateMachine::State;
 
+std::vector<std::byte> Bytes(std::initializer_list<unsigned char> values);
+
+std::vector<std::byte> WithTimestamp(std::vector<std::byte> bytes);
+
+std::vector<std::byte> SixDoubles();
+
+template <typename Message>
+void ExpectControlPayload();
+
+template <typename Message>
+void ExpectNetworkMessage(const Message& message);
+
+template <typename Message>
+void ExpectTimestampRoundTrip(Message message);
+
+template <typename Message>
+void ExpectInvalidSizes(const Message& message);
+
+// -----------------------------------------------------------------------------
+
 std::vector<std::byte> Bytes(std::initializer_list<unsigned char> values) {
   std::vector<std::byte> bytes;
   for (const auto value : values) {
