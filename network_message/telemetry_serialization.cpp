@@ -1,5 +1,6 @@
 #include "telemetry_serialization.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -249,11 +250,20 @@ template <>
 ControlMessage Deserialize<ControlMessage>(
     const std::vector<std::byte>& bytes) {
   CheckSize(bytes, kControlBytes);
-  return {ReadTimestamp(bytes),
+  const ControlMessage message{ReadTimestamp(bytes),
           {ReadDouble(bytes, 0), ReadDouble(bytes, kDoubleBytes),
            ReadDouble(bytes, 2 * kDoubleBytes)},
           {ReadDouble(bytes, 3 * kDoubleBytes), ReadDouble(bytes, 4 * kDoubleBytes),
            ReadDouble(bytes, 5 * kDoubleBytes)}};
+  if (!std::isfinite(message.position.x_meters) ||
+      !std::isfinite(message.position.y_meters) ||
+      !std::isfinite(message.position.z_meters) ||
+      !std::isfinite(message.orientation.roll_radians) ||
+      !std::isfinite(message.orientation.pitch_radians) ||
+      !std::isfinite(message.orientation.yaw_radians)) {
+    throw std::invalid_argument("Non-finite control target");
+  }
+  return message;
 }
 
 template <>

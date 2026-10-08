@@ -209,7 +209,7 @@ TEST_F(RunnerTest, EmptyQueueProcessesOneTelemetryEventAndPropagatesFatalErrors)
   EXPECT_THROW(runner.RunOnce(), std::runtime_error);
 }
 
-TEST_F(RunnerTest, ProtocolDispatchesAutomaticControlsAndPreservesStateOnRejection) {
+TEST_F(RunnerTest, DispatchesAutomaticControlsAndPreservesStateOnRejection) {
   Manual();
   auto runner = Runner();
   transport.Push(CommandMessage{start + 2ms, Command::kToAutomatic});
@@ -222,12 +222,51 @@ TEST_F(RunnerTest, ProtocolDispatchesAutomaticControlsAndPreservesStateOnRejecti
 
 TEST_F(RunnerTest, IdenticalControlPacketUsesSourceAndRespectsCurrentMode) {
   Manual();
+  auto runner = Runner();
   const NetworkMessage message{ControlMessage{start + 2ms, {1, 0, 0}, {}}};
-  EXPECT_FALSE(ControllerProtocol::Deliver(controller, message, ControlSource::kAutomatic));
-  EXPECT_TRUE(ControllerProtocol::Deliver(controller, message, ControlSource::kManual));
-  ASSERT_TRUE(controller.Command(Command::kToAutomatic));
-  EXPECT_FALSE(ControllerProtocol::Deliver(controller, message, ControlSource::kManual));
-  EXPECT_TRUE(ControllerProtocol::Deliver(controller, message, ControlSource::kAutomatic));
+  transport.incoming.push_back(message.data);
+  manual_transport.incoming.push_back(message.data);
+  transport.Push(CommandMessage{start + 3ms, Command::kToAutomatic});
+  transport.Push(ControlMessage{start + 4ms, {-1, 0, 0}, {}});
+  manual_transport.Push(ControlMessage{start + 4ms, {1, 0, 0}, {}});
+  runner.RunOnce();
+  EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, 0);
+  runner.RunOnce();
+  EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, 1);
+  runner.RunOnce();
+  EXPECT_EQ(state_machine.GetState(), State::kAutomatic);
+  runner.RunOnce();
+  EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, 0);
+  runner.RunOnce();
+  EXPECT_DOUBLE_EQ(model.GetLinearVelocity().x_meters_per_second, -1);
+}
+
+TEST_F(RunnerTest, RejectsInvalidInputBeforeMatchingDropFilters) {
+  NetworkEmulator inbound{0ms};
+  for (const auto type : {MessageType::kControl, MessageType::kCommand,
+                          MessageType::kAttitude}) {
+    inbound.AddDropFilter(start, start + 1s, type);
+  }
+  auto runner = Runner(inbound);
+  transport.Push(ControlMessage{start, {},
+      {0, std::numeric_limits<double>::quiet_NaN(), 0}});
+  auto truncated = NetworkMessage{ControlMessage{start, {}, {}}}.data;
+  truncated.erase(truncated.begin());
+  transport.incoming.push_back(std::move(truncated));
+  auto unknown = NetworkMessage{CommandMessage{start, Command::kHold}}.data;
+  unknown.front() = std::byte{255};
+  transport.incoming.push_back(std::move(unknown));
+  transport.Push(AttitudeMessage{start, {}, {}});
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_THROW(runner.RunOnce(), std::invalid_argument);
+    EXPECT_EQ(controller.GetTime(), start);
+    EXPECT_EQ(state_machine.GetState(), State::kGuarded);
+    EXPECT_TRUE(transport.sent.empty());
+  }
+  EXPECT_TRUE(transport.incoming.empty());
+  runner.RunOnce();
+  EXPECT_EQ(controller.GetTime(), start + 20ms);
+  EXPECT_TRUE(transport.sent.empty());
 }
 
 TEST_F(RunnerTest, PreservesBothSourcesThroughSharedControlDelay) {

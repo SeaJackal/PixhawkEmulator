@@ -6,12 +6,14 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 
-#include "controller_protocol.h"
 #include "logger.h"
 #include "network_emulator.h"
+#include "network_message.h"
 
 template <typename ControllerType, typename Transport>
 class SimulationRunner {
@@ -47,7 +49,7 @@ class SimulationRunner {
         controller_.Process(std::max(controller_.GetTime(), deadline));
     DrainLogs();
     if (telemetry.has_telemetry) {
-      for (auto& message : ControllerProtocol::Encode(telemetry)) {
+      for (auto& message : Encode(telemetry)) {
         if (auto delivery = outbound_.Process(std::move(message))) {
           tasks_.emplace(delivery->arrival_time,
                          [&transport = transport_,
@@ -76,6 +78,17 @@ class SimulationRunner {
   }
 
  private:
+  enum class ControlSource { kAutomatic, kManual };
+
+  static std::vector<NetworkMessage> Encode(const Telemetry& telemetry) {
+    std::vector<NetworkMessage> messages;
+    if (telemetry.heartbeat) messages.emplace_back(*telemetry.heartbeat);
+    if (telemetry.attitude) messages.emplace_back(*telemetry.attitude);
+    if (telemetry.global_position) messages.emplace_back(*telemetry.global_position);
+    if (telemetry.battery_status) messages.emplace_back(*telemetry.battery_status);
+    return messages;
+  }
+
   void DrainLogs() {
     if (!logger_) return;
     for (const auto& record : logger_->TakeRecords()) {
@@ -100,13 +113,32 @@ class SimulationRunner {
     auto bytes = transport.Receive();
     if (!bytes) return false;
     NetworkMessage message(std::move(*bytes));
-    ControllerProtocol::Decode(message);
+    const std::vector<std::byte> payload(message.data.begin(), message.data.end() - 1);
+    std::function<void()> callback;
+    switch (message.type) {
+      case MessageType::kCommand: {
+        const auto command = Deserialize<CommandMessage>(payload);
+        callback = [&controller = controller_, command] {
+          controller.Command(command.command);
+        };
+        break;
+      }
+      case MessageType::kControl: {
+        const auto command = Deserialize<ControlMessage>(payload);
+        callback = [&controller = controller_, command, source] {
+          if (source == ControlSource::kManual) {
+            controller.SetManualControl(command.position, command.orientation);
+          } else {
+            controller.SetAutomaticControl(command.position, command.orientation);
+          }
+        };
+        break;
+      }
+      default:
+        throw std::invalid_argument("Expected controller command");
+    }
     if (auto delivery = inbound_.Process(std::move(message))) {
-      tasks_.emplace(delivery->arrival_time,
-                     [&controller = controller_, source,
-                      message = std::move(delivery->message)] {
-                       ControllerProtocol::Deliver(controller, message, source);
-                     });
+      tasks_.emplace(delivery->arrival_time, std::move(callback));
     }
     return true;
   }

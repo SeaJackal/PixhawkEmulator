@@ -1,3 +1,3 @@
-add_executable(simulation_runner_tests simulation_runner_test.cpp scheduled_link_test.cpp udp_transport_test.cpp)
-target_link_libraries(simulation_runner_tests PRIVATE simulation_runner scheduled_link udp_transport GTest::gtest_main)
+add_executable(simulation_runner_tests simulation_runner_test.cpp udp_transport_test.cpp)
+target_link_libraries(simulation_runner_tests PRIVATE simulation_runner udp_transport GTest::gtest_main)
 gtest_discover_tests(simulation_runner_tests)

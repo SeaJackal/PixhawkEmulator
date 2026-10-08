@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -191,6 +192,27 @@ void ExpectControlPayload() {
 
 TEST(ControlSerializationTest, ControlsEncodePositionThenOrientation) {
   ExpectControlPayload<ControlMessage>();
+}
+
+TEST(ControlSerializationTest, RejectsNonFiniteValuesInEveryControlField) {
+  for (const double value : {std::numeric_limits<double>::quiet_NaN(),
+                             std::numeric_limits<double>::infinity(),
+                             -std::numeric_limits<double>::infinity()}) {
+    for (std::size_t field = 0; field < 6; ++field) {
+      SCOPED_TRACE(field);
+      ControlMessage message{simulation::TimePoint{42s}, {}, {}};
+      const std::array fields{&message.position.x_meters, &message.position.y_meters,
+                              &message.position.z_meters,
+                              &message.orientation.roll_radians,
+                              &message.orientation.pitch_radians,
+                              &message.orientation.yaw_radians};
+      *fields[field] = value;
+      auto bytes = Serialize(message);
+      EXPECT_THROW(Deserialize<ControlMessage>(bytes), std::invalid_argument);
+      bytes.push_back(static_cast<std::byte>(MessageType::kControl));
+      EXPECT_THROW(NetworkMessage{bytes}, std::invalid_argument);
+    }
+  }
 }
 
 template <typename Message>
