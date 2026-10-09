@@ -11,5 +11,5 @@ docker run --rm \
     --workdir /workspace \
     "$image" bash -ec '
         cmake -S . -B build/docker -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-        cmake --build build/docker --target pixhawk_simulator --parallel 2
+        cmake --build build/docker --target pixhawk_simulator
     '
