@@ -5,7 +5,13 @@
   },
   "battery": {
     "max_capacity_amp_hours": 2.0,
-    "start_capacity_amp_hours": 2.0
+    "start_capacity_amp_hours": 2.0,
+    "battery_errors": [
+      {
+        "point_ms": 5000,
+        "charge_diff_amp_hours": 0.3
+      }
+    ]
   },
   "state_machine": {
     "readiness_timeout_ms": 1000

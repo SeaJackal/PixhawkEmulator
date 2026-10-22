@@ -157,7 +157,7 @@ int main(int argc, char** argv) try {
     controller.AddGnssLoss(start + loss.start, loss.duration);
   }
   for (const auto& error : config->battery.battery_errors) {
-    controller.AddBatteryError(start + simulation::Duration(10000), 0.3);
+    controller.AddBatteryError(start + error.point, error.charge_diff);
   }
   UdpTransport transport{local, peer};
   UdpTransport manual_transport{manual_local, peer};
