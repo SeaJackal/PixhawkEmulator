@@ -35,7 +35,12 @@ bool BatteryModel::Process(double current_amps, simulation::Duration elapsed) {
       std::clamp(charge_amp_hours_ - consumed_amp_hours,
                  std::min(charge_amp_hours_, critical_charge_amp_hours),
                  max_capacity_amp_hours_);
+
   return GetStatus() != Status::kCritical;
+}
+
+void BatteryModel::InjectBatteryError(double charge_diff) {
+  charge_amp_hours_ -= charge_diff;
 }
 
 void BatteryModel::Reset() { charge_amp_hours_ = max_capacity_amp_hours_; }

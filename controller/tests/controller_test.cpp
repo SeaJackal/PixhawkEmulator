@@ -49,6 +49,7 @@ class RecordingBattery {
  public:
   std::vector<std::pair<double, simulation::Duration>> calls;
   bool Process(double current, simulation::Duration elapsed);
+  void InjectBatteryError(double charge_diff);
   [[nodiscard]] double GetVoltageVolts() const;
   [[nodiscard]] double GetChargeAmpHours() const;
 };
@@ -114,6 +115,9 @@ LinearVelocity StubModel::GetLinearVelocity() const {
 bool RecordingBattery::Process(double current, simulation::Duration elapsed) {
   calls.emplace_back(current, elapsed);
   return true;
+}
+
+void RecordingBattery::InjectBatteryError(double charge_diff) {
 }
 
 double RecordingBattery::GetVoltageVolts() const { return 11.5; }

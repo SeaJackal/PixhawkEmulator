@@ -261,7 +261,7 @@ ControllerConfig ReadController(const Value& value) {
 BatteryConfig ReadBattery(const Value& value) {
   BatteryConfig config;
   const auto& object = ReadObject(
-      value, "battery", {"max_capacity_amp_hours", "start_capacity_amp_hours"});
+      value, "battery", {"max_capacity_amp_hours", "start_capacity_amp_hours", "battery_errors"});
   if (const auto* capacity = object.if_contains("max_capacity_amp_hours")) {
     config.max_capacity_amp_hours =
         ReadNumber(*capacity, "battery.max_capacity_amp_hours");
@@ -277,6 +277,25 @@ BatteryConfig ReadBattery(const Value& value) {
     Invalid("battery.start_capacity_amp_hours", "exceeds maximum capacity");
   }
 
+  if (const auto* battery_errors = object.if_contains("battery_errors")) {
+    if (!battery_errors->is_array()) {
+      Invalid("battery.battery_errors", "expected array");
+    }
+    for (const auto& value : battery_errors->as_array()) {
+      const auto path = "battery.battery_errors[" +
+                        std::to_string(config.battery_errors.size()) + "]";
+      const auto& battery_error =
+          ReadObject(value, path, {"point_ms", "charge_diff_amp_hours"});
+      BatteryErrorConfig result;
+      result.point = ReadDuration(Required(battery_error, "point_ms", path),
+                                  path + ".point_ms");
+      result.charge_diff =
+          ReadNumber(Required(battery_error, "charge_diff_amp_hours", path),
+                     path + ".charge_diff_amp_hours");
+      config.battery_errors.push_back(result);
+    }
+  }
+
   return config;
 }
 
@@ -287,7 +306,7 @@ TimePoint AddOffset(TimePoint start, Duration offset, const std::string& path) {
   return start + offset;
 }
 
-}
+}  // namespace
 
 SimulationConfig ParseSimulationConfig(std::string_view json) {
   boost::system::error_code error;

@@ -130,7 +130,7 @@ std::optional<SimulationConfig> ReadOptions(
   return config;
 }
 
-}
+}  // namespace
 
 int main(int argc, char** argv) try {
   const auto config = ReadOptions({argv, std::next(argv, argc)});
@@ -155,6 +155,9 @@ int main(int argc, char** argv) try {
           "GNSS loss start exceeds simulation clock range");
     }
     controller.AddGnssLoss(start + loss.start, loss.duration);
+  }
+  for (const auto& error : config->battery.battery_errors) {
+    controller.AddBatteryError(start + simulation::Duration(10000), 0.3);
   }
   UdpTransport transport{local, peer};
   UdpTransport manual_transport{manual_local, peer};

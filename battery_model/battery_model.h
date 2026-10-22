@@ -14,6 +14,7 @@ class BatteryModel {
   BatteryModel(double max_capacity_amp_hours, double start_capacity_amp_hours);
 
   bool Process(double current_amps, simulation::Duration elapsed);
+  void InjectBatteryError(double charge_diff);
   void Reset();
 
   [[nodiscard]] double GetChargeAmpHours() const;

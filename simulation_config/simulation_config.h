@@ -16,10 +16,16 @@ struct DynamicModelConfig {
   double angular_speed_radians_per_second = 1.0;
 };
 
+struct BatteryErrorConfig {
+  simulation::Duration point{};
+  double charge_diff{};
+};
+
 struct BatteryConfig {
   static constexpr double kDefaultCapacityAmpHours = 2.0;
   double max_capacity_amp_hours = kDefaultCapacityAmpHours;
   double start_capacity_amp_hours = kDefaultCapacityAmpHours;
+  std::vector<BatteryErrorConfig> battery_errors;
 };
 
 struct StateMachineConfig {

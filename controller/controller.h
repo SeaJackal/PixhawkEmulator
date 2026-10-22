@@ -41,6 +41,7 @@ class Controller {
 
   bool Command(CommandType command);
   void AddGnssLoss(TimePoint start, Duration duration);
+  void AddBatteryError(TimePoint point, double charge_diff);
   bool SetManualControl(const Position& position,
                         const Orientation& orientation);
   bool SetAutomaticControl(const Position& position,
@@ -50,6 +51,15 @@ class Controller {
   [[nodiscard]] TimePoint NextTelemetryTime() const;
 
  private:
+  struct GnssLoss {
+    TimePoint start;
+    TimePoint end;
+  };
+  struct BatteryError {
+    TimePoint point;
+    double charge_diff;
+  };
+
   Telemetry CollectTelemetry();
 
   Model& model_;
@@ -60,11 +70,8 @@ class Controller {
   TimePoint next_attitude_;
   TimePoint next_global_position_;
   TimePoint next_battery_status_;
-  struct GnssLoss {
-    TimePoint start;
-    TimePoint end;
-  };
   std::vector<GnssLoss> gnss_losses_;
+  std::vector<BatteryError> battery_errors_;
 };
 
 // -----------------------------------------------------------------------------
@@ -106,6 +113,12 @@ void Controller<Model, Battery, StateMachine>::AddGnssLoss(TimePoint start,
     return;
   }
   gnss_losses_.push_back({start, start + duration});
+}
+
+template <typename Model, typename Battery, typename StateMachine>
+void Controller<Model, Battery, StateMachine>::AddBatteryError(
+    TimePoint point, double charge_diff) {
+  battery_errors_.push_back({point, charge_diff});
 }
 
 template <typename Model, typename Battery, typename StateMachine>
@@ -164,6 +177,10 @@ Telemetry Controller<Model, Battery, StateMachine>::CollectTelemetry() {
     next_global_position_ += kGlobalPositionPeriod;
   }
   if (time_ == next_battery_status_) {
+    if (!battery_errors_.empty() && battery_errors_.front().point <= time_) {
+      battery_.InjectBatteryError(battery_errors_.front().charge_diff);
+      battery_errors_.erase(battery_errors_.begin());
+    }
     telemetry.battery_status = BatteryStatusMessage{
         time_, battery_.GetVoltageVolts(), model_.GetCurrentAmps(),
         battery_.GetChargeAmpHours()};
